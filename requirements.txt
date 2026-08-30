@@ -1,4 +1,4 @@
-duckdb>=1.1,<2
 pyarrow>=17,<20
 openai>=1.0,<3
 requests>=2.31,<3
+duckdb==1.5.5
