@@ -2,6 +2,11 @@
 Constantes estadísticas del generador. Copiadas tal cual del brief
 (docs/decision_log.md documenta la fuente y las decisiones no cubiertas
 por el brief, como MERCHANT_WEIGHTS y BANKS_BY_COUNTRY).
+
+Vive en pipeline/domain/ (no pipeline/generator/) porque tanto el
+generador (encoding: arma payloads vendor-shaped) como Silver (decoding:
+parsea esos payloads de vuelta) necesitan estas constantes -- ver
+docs/decision_log.md / docs/pipeline_handoff.md para el porqué del split.
 """
 
 # ---------------------------------------------------------------------------
@@ -131,3 +136,11 @@ FX_RATE_TO_USD = {
 # Generador A (para amount_usd_total agregado) como el B (por evento) lo
 # necesitan.
 AMOUNT_RANGE_BY_COUNTRY = {"MX": (150, 3500), "BR": (50, 1200), "CO": (20000, 450000)}
+
+# país -> moneda / site_id del vendor. Antes vivían en
+# generator/vendor_shapes.py, pero silver/parsers.py también los necesita
+# (para derivar country de vuelta a partir de currency/site_id al parsear
+# mercadopago/stripe/adyen) -- mismo patrón que decline_mapping.py: una
+# tabla compartida por el lado que codifica y el lado que decodifica.
+CURRENCY_BY_COUNTRY = {"MX": "MXN", "BR": "BRL", "CO": "COP"}
+SITE_ID_BY_COUNTRY = {"MX": "MLM", "BR": "MLB", "CO": "MCO"}
