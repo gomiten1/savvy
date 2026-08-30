@@ -1,0 +1,4 @@
+provider,countries,methods,role
+P1,BR|MX|CO,card|pix|spei,gateway
+P2,BR|MX|CO,card|pix|spei,acquirer
+P3,BR|MX|CO,card|pix|spei,gateway

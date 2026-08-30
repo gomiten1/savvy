@@ -1,0 +1,6 @@
+action_id,action,precondition,owner
+reroute_provider,Recommend routing traffic to another provider,Alternative provider serves the country and method,payment_operations
+open_provider_sev1,Open a severity-1 support case with the provider,Provider or infrastructure error evidence is elevated,provider_operations
+enable_retry,Enable retry through a different provider,Retry route supports country method and decline class,payment_operations
+disable_method,Temporarily disable the affected method,Alternative checkout path is available,merchant_operations
+monitor_only,No safe action — monitor only,Evidence is insufficient,incident_commander

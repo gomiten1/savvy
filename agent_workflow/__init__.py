@@ -1,0 +1,2 @@
+"""PagoTotal conversion monitoring MVP."""
+
