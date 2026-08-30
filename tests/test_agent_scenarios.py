@@ -268,6 +268,9 @@ class ExecOutputTests(unittest.TestCase):
         self.assertTrue(rendered.startswith(f"*{diagnosis.exec_one_liner}*"))
         self.assertIn(f"${incident.burn_rate_usd_hour:,.0f}/hr", rendered)
         self.assertIn(f"${incident.cumulative_loss_usd:,.0f} lost since", rendered)
+        self.assertIn(
+            "<https://savvy.fly.dev/incident-detail.html?id=inc_test_001|Open incident report>", rendered
+        )
         # The model's invented figure is quoted as its prose, never as our money line.
         self.assertNotIn("$999,999,999/hr ·", rendered)
 

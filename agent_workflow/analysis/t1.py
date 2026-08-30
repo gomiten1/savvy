@@ -78,6 +78,8 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--start", help="ISO YYYY-MM-DDTHH:MM:SSZ")
     parser.add_argument("--end", help="ISO YYYY-MM-DDTHH:MM:SSZ")
+    parser.add_argument("--build-only", action="store_true",
+                        help="Write the baseline artifact without the T1 replay validation.")
     args = parser.parse_args()
 
     if args.store == "gold":
@@ -90,5 +92,10 @@ if __name__ == "__main__":
         store = MockStore.from_csv(args.input)
 
     start, end = _resolve_range(args, store)
+    if args.build_only:
+        artifact = build(store, start, end)
+        write_version(artifact, args.data_dir)
+        print("Baselines built")
+        raise SystemExit(0)
     scans, signals = run(store, start, end, args.data_dir)
     print(f"T1: {scans} scans, {signals} clean-history signals")

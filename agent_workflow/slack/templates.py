@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
 from typing import Mapping
+from urllib.parse import quote
+
+
+DEFAULT_DASHBOARD_URL = "https://savvy.fly.dev"
 
 
 def format_cell(cell: Mapping[str, str | None]) -> str:
@@ -37,6 +42,12 @@ def format_storm_summary(incidents) -> str:
     return "\n".join((f"*{len(incidents)} further incidents open* (suppressed by alert storm cap)", *rows))
 
 
+def dashboard_incident_url(incident_id: str) -> str:
+    """Link an executive Slack update to the incident's dashboard report."""
+    base_url = os.environ.get("DASHBOARD_URL", DEFAULT_DASHBOARD_URL).rstrip("/")
+    return f"{base_url}/incident-detail.html?id={quote(incident_id, safe='')}"
+
+
 def format_diagnosis(incident, diagnosis) -> str:
     """Render only validated diagnosis fields; internal telemetry stays private.
 
@@ -60,4 +71,5 @@ def format_diagnosis(incident, diagnosis) -> str:
     ]
     if diagnosis.next_step:
         lines.append(f"*Next step:* {diagnosis.next_step}")
+    lines.append(f"*Dashboard:* <{dashboard_incident_url(incident.incident_id)}|Open incident report>")
     return "\n".join(lines)

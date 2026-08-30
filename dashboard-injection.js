@@ -20,6 +20,7 @@
         const form = document.getElementById('injectionForm');
         if (!form) return;
         const provider = document.getElementById('injectionProvider');
+        const mode = document.getElementById('injectionMode');
         const country = document.getElementById('injectionCountry');
         const method = document.getElementById('injectionMethod');
         const bank = document.getElementById('injectionBank');
@@ -34,9 +35,16 @@
             if (!canTargetBank) bank.value = '';
         }
 
+        function syncModeCopy() {
+            const storm = mode.value === 'storm';
+            submit.textContent = storm ? 'Inject alert storm' : 'Inject controlled incident';
+        }
+
         provider.addEventListener('change', syncRouteOptions);
         country.addEventListener('change', syncRouteOptions);
+        mode.addEventListener('change', syncModeCopy);
         syncRouteOptions();
+        syncModeCopy();
 
         form.addEventListener('submit', async (event) => {
             event.preventDefault();
@@ -45,6 +53,7 @@
             status.textContent = 'Queueing incident…';
             const values = new FormData(form);
             const payload = {
+                mode: values.get('mode'),
                 provider: values.get('provider'),
                 country: values.get('country'),
                 payment_method: values.get('payment_method'),
@@ -58,7 +67,9 @@
                 const result = await response.json();
                 if (!response.ok) throw new Error(result.error || 'The injection could not be queued.');
                 status.classList.add('injection-status--success');
-                status.textContent = 'Queued. Detection should pick it up shortly.';
+                status.textContent = payload.mode === 'storm'
+                    ? 'Storm queued. Raw detector fan-out should appear shortly.'
+                    : 'Controlled incident queued. One canonical report should appear shortly.';
             } catch (error) {
                 status.classList.add('injection-status--error');
                 status.textContent = error instanceof Error ? error.message : 'The injection could not be queued.';

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
@@ -53,6 +53,8 @@ class ReportPublisher:
         self.feed_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as connection:
             connection.executescript(DDL)
+        self._repair_publication_timestamps()
+        self._repair_missing_open_revisions()
         # Make an existing reports.db visible to a dashboard as soon as the
         # workflow starts, not only after the next diagnosis completes.
         self.export_dashboard_feed()
@@ -69,6 +71,62 @@ class ReportPublisher:
             raise
         finally:
             connection.close()
+
+    def _repair_publication_timestamps(self) -> None:
+        """Keep persisted reports in the detector's simulated-time domain.
+
+        The live generator advances its event clock faster than wall time. Older
+        reports used wall-clock ``published_at`` values, which can precede their
+        simulated ``detected_at`` and cause the dashboard contract validator to
+        reject the entire feed. Repair existing rows on startup and preserve a
+        strictly increasing revision order for the browser.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT incident_id, revision, published_at, detected_at "
+                "FROM incident_reports ORDER BY incident_id, revision"
+            ).fetchall()
+            prior_by_incident: dict[str, datetime] = {}
+            for row in rows:
+                published = datetime.fromisoformat(row["published_at"])
+                detected = datetime.fromisoformat(row["detected_at"])
+                corrected = max(published, detected)
+                previous = prior_by_incident.get(row["incident_id"])
+                if previous is not None and corrected <= previous:
+                    corrected = previous + timedelta(milliseconds=1)
+                prior_by_incident[row["incident_id"]] = corrected
+                if corrected != published:
+                    connection.execute(
+                        "UPDATE incident_reports SET published_at = ? "
+                        "WHERE incident_id = ? AND revision = ?",
+                        (corrected.isoformat(), row["incident_id"], row["revision"]),
+                    )
+
+    def _repair_missing_open_revisions(self) -> None:
+        """Make legacy first-resolution rows acceptable to the dashboard contract.
+
+        Earlier asynchronous diagnoses could publish after their Incident had
+        resolved, leaving no visible open state. Future reports use the
+        lifecycle-safe sequence in ``Workflow._diagnose``; this repair makes
+        the historical feed renderable immediately.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT incident_id, revision, status FROM incident_reports "
+                "ORDER BY incident_id, revision"
+            ).fetchall()
+            saw_open: set[str] = set()
+            for row in rows:
+                incident_id = row["incident_id"]
+                if row["status"] == "open":
+                    saw_open.add(incident_id)
+                elif row["status"] == "resolved" and incident_id not in saw_open:
+                    connection.execute(
+                        "UPDATE incident_reports SET status = 'open', resolved_at = NULL "
+                        "WHERE incident_id = ? AND revision = ?",
+                        (incident_id, row["revision"]),
+                    )
+                    saw_open.add(incident_id)
 
     @staticmethod
     def _route_entity(cell: dict[str, str | None]) -> list[dict[str, str | float]]:
@@ -131,7 +189,11 @@ class ReportPublisher:
 
     def publish(self, incident, diagnosis, revision: int | None = None, *, published_at: datetime | None = None) -> int:
         """Idempotently publish a diagnosis revision; never re-derive core figures."""
-        anchor, timestamp = incident.current_anchor, (published_at or datetime.now(timezone.utc))
+        anchor = incident.current_anchor
+        # Incidents are evaluated on the accelerated generator clock. Use that
+        # domain for the feed contract instead of wall time, which can otherwise
+        # appear to publish a report before its simulated detection timestamp.
+        timestamp = published_at or incident.last_evaluated_at or incident.opened_at
         if revision is None:
             with self._connect() as connection:
                 revision = connection.execute("SELECT COALESCE(MAX(revision), 0) + 1 FROM incident_reports WHERE incident_id = ?", (incident.incident_id,)).fetchone()[0]

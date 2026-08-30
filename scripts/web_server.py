@@ -52,6 +52,7 @@ def validate_injection(body: object) -> dict[str, Any]:
     multiplier = body.get("approval_rate_multiplier")
     duration = body.get("duration_minutes")
     decline_code = body.get("dominant_decline_code") or None
+    mode = body.get("mode", "controlled")
 
     if provider not in PROVIDERS:
         raise ValueError("Choose a supported provider.")
@@ -69,6 +70,8 @@ def validate_injection(body: object) -> dict[str, Any]:
         raise ValueError("Duration must be a whole number between 5 and 240 minutes.")
     if decline_code is not None and decline_code not in CANONICAL_CODES:
         raise ValueError("Choose a supported decline code.")
+    if mode not in {"controlled", "storm"}:
+        raise ValueError("Choose either a controlled incident or an alert storm.")
 
     route = "-".join(filter(None, (provider, country, payment_method, issuing_bank)))
     return {
@@ -82,6 +85,7 @@ def validate_injection(body: object) -> dict[str, Any]:
         "duration_minutes": duration,
         "approval_rate_multiplier": float(multiplier),
         "dominant_decline_code": decline_code,
+        "mode": mode,
     }
 
 
@@ -120,7 +124,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if self.path.split("?", 1)[0] != "/healthz":
             return super().do_GET()
         healthy, payload = health_payload(self.server.status_file, self.server.max_heartbeat_age_seconds)
-        self._send_json(HTTPStatus.OK if healthy else HTTPStatus.SERVICE_UNAVAILABLE, payload)
+        # Fly's service check decides whether the public dashboard is routed.
+        # The web process is usable as soon as it is listening: it can serve
+        # the UI and existing report feed while the data workers warm up. The
+        # launcher still exits if either worker dies, so this does not keep a
+        # broken runtime alive indefinitely.
+        payload["web_status"] = "ok"
+        self._send_json(HTTPStatus.OK, payload)
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path != "/api/injections":

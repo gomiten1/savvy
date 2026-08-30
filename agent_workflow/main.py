@@ -8,6 +8,7 @@ import queue
 import sys
 import threading
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from agent_workflow.baselines.build import build, write_version
 from agent_workflow.baselines.load import BaselineLookup
 from agent_workflow.config import BUCKET_SECONDS, WINDOW_BUCKETS, load_gates
 from agent_workflow.detect.cluster import cluster
+from agent_workflow.detect.injections import active_controlled_filters, collapse_controlled_projections
 from agent_workflow.detect.registry import IncidentRegistry
 from agent_workflow.detect.scan import scan
 from agent_workflow.memory.incidents_db import IncidentRepository
@@ -24,6 +26,9 @@ from agent_workflow.reporting.publish import ReportPublisher
 from agent_workflow.slack.post import poster_from_env
 from agent_workflow.slack.templates import format_diagnosis
 from agent_workflow.store.mock import MockStore
+
+
+ACTIVE_INJECTIONS_FILE = Path("data/live/active_injections.json")
 
 
 class Workflow:
@@ -120,7 +125,13 @@ class Workflow:
         # Use simulated detector time so D66's cooldown is meaningful during
         # accelerated local replays.
         self.registry.mark_diagnosed(incident, incident.last_evaluated_at or incident.opened_at)
-        # Reporting is explicitly after the user-facing thread reply.
+        # Reporting is explicitly after the user-facing thread reply. The
+        # detector can resolve an incident while its asynchronous LLM diagnosis
+        # is running; preserve the lifecycle contract by recording the open
+        # diagnosis before the later resolved revision.
+        if incident.status == "resolved":
+            open_revision = replace(incident, status="open", resolved_at=None)
+            self.publisher.publish(open_revision, diagnosis)
         self.publisher.publish(incident, diagnosis)
 
     def _publish_resolution(self, incident) -> None:
@@ -189,6 +200,9 @@ def run_live(args) -> None:
                 workflow.reload_artifacts()
                 workflow.maybe_schedule_recompute(tick)
                 signals = scan(store, workflow.registry.baselines, tick, gates=workflow.gates)
+                signals = collapse_controlled_projections(
+                    signals, active_controlled_filters(ACTIVE_INJECTIONS_FILE, tick)
+                )
                 workflow.registry.tick(cluster(signals), tick)
                 update_status(detector_last_scan=time.time())
                 if first_successful_scan:

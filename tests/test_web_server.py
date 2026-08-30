@@ -4,11 +4,14 @@ import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
+from unittest.mock import Mock
 
 from pipeline.generator.generate_live_stream import LiveStreamGenerator
 import pipeline.generator.generate_live_stream as live_stream
 from scripts.web_server import validate_injection, write_injection
+from scripts.web_server import DashboardHandler
 
 
 class InjectionValidationTests(unittest.TestCase):
@@ -28,6 +31,12 @@ class InjectionValidationTests(unittest.TestCase):
         self.assertEqual("mercadopago", trigger["cell_filter"]["provider"])
         self.assertEqual("itau", trigger["cell_filter"]["issuing_bank"])
         self.assertEqual(0.3, trigger["approval_rate_multiplier"])
+        self.assertEqual("controlled", trigger["mode"])
+
+    def test_accepts_storm_mode_and_rejects_unknown_modes(self) -> None:
+        self.assertEqual("storm", validate_injection(self.valid_payload() | {"mode": "storm"})["mode"])
+        with self.assertRaisesRegex(ValueError, "controlled incident"):
+            validate_injection(self.valid_payload() | {"mode": "chaos"})
 
     def test_rejects_invalid_route_and_unsafe_values(self) -> None:
         invalid_method = self.valid_payload() | {"payment_method": "oxxo", "country": "BR"}
@@ -66,14 +75,31 @@ class InjectionValidationTests(unittest.TestCase):
             generator.sim_now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
             generator.reveal_injections = False
             original_trigger_file = live_stream.TRIGGER_FILE
+            original_active_injections_file = live_stream.ACTIVE_INJECTIONS_FILE
             try:
                 live_stream.TRIGGER_FILE = trigger_path
+                live_stream.ACTIVE_INJECTIONS_FILE = Path(directory) / "active_injections.json"
                 generator._check_trigger_file()
             finally:
                 live_stream.TRIGGER_FILE = original_trigger_file
+                live_stream.ACTIVE_INJECTIONS_FILE = original_active_injections_file
             self.assertFalse(trigger_path.exists())
             self.assertEqual(1, len(generator.incidents))
             self.assertEqual("mercadopago", generator.incidents[0].cell_filter["provider"])
+
+
+class WebHealthCheckTests(unittest.TestCase):
+    def test_dashboard_health_check_is_live_while_workers_warm_up(self) -> None:
+        handler = Mock()
+        handler.path, handler.wfile = "/healthz", BytesIO()
+        handler.server.status_file = "/definitely-missing-runtime-status.json"
+        handler.server.max_heartbeat_age_seconds = 60
+        handler._send_json = Mock()
+        DashboardHandler.do_GET(handler)
+        handler._send_json.assert_called_once()
+        status, payload = handler._send_json.call_args.args
+        self.assertEqual(200, status)
+        self.assertEqual("ok", payload["web_status"])
 
 
 if __name__ == "__main__":

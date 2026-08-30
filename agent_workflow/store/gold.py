@@ -243,7 +243,12 @@ class GoldStore:
         ))
         totals: dict[str, float] = {}
         for row in rows:
-            totals[row["decline_code"]] = totals.get(row["decline_code"], 0) + row["attempts"]
+            # Successful attempts have no decline code. They are present in the
+            # rate table but are not part of a decline mix; retaining their
+            # ``None`` key later breaks the diagnosis prompt's sorted JSON.
+            code = row["decline_code"]
+            if code is not None:
+                totals[code] = totals.get(code, 0) + row["attempts"]
         grand = sum(totals.values())
         if not grand:
             return {}

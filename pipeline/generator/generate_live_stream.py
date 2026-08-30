@@ -21,6 +21,8 @@ Soporta inyección de incidentes:
 """
 import argparse
 import json
+import math
+import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
@@ -43,7 +45,8 @@ from pipeline.domain.weights import (
 from pipeline.domain.decline_mapping import CANONICAL_CODES
 from pipeline.domain.seasonality import volume_multiplier
 from pipeline.generator.sampling import enumerate_rate_cells, weighted_choice, poisson_sample
-from pipeline.generator.vendor_shapes import CanonicalEvent, build_vendor_event, pick_issuer_id
+from pipeline.generator.vendor_shapes import CanonicalEvent, build_vendor_event
+from pipeline.domain.bin_lookup import ISSUERS_BY_COUNTRY
 from pipeline.generator.inject_incidents import (
     Incident,
     effective_approval_rate,
@@ -58,6 +61,7 @@ from pipeline.silver.normalize import normalize_batch
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 GOLD_DIR = DATA_DIR / GOLD_DIRNAME
 TRIGGER_FILE = DATA_DIR / "live" / "incident_trigger.json"
+ACTIVE_INJECTIONS_FILE = DATA_DIR / "live" / "active_injections.json"
 # The historical generator can finish during the thin overnight period.  Starting
 # live there turns sparse merchant splits into misleading near-100% baselines.
 # Pick a stable, daytime hour *after* history_end so live rows still land in the
@@ -100,6 +104,30 @@ def write_incident_trigger(name, provider=None, country=None, payment_method=Non
     TRIGGER_FILE.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _record_active_injection(payload: dict, start: datetime) -> None:
+    """Publish controlled-demo correlation metadata for the detector.
+
+    This is deliberately separate from payment events: production events do not
+    carry a synthetic-scenario label. The generator also restores these records
+    after a restart, so a queued scenario is not silently lost during a deploy.
+    """
+    end = start + timedelta(minutes=payload.get("duration_minutes", 60))
+    try:
+        active = json.loads(ACTIVE_INJECTIONS_FILE.read_text(encoding="utf-8"))
+        active = active if isinstance(active, list) else []
+    except (OSError, json.JSONDecodeError):
+        active = []
+    active = [entry for entry in active if entry.get("end", "") > start.isoformat()]
+    active.append({"name": payload["name"], "cell_filter": payload.get("cell_filter", {}),
+                   "start": start.isoformat(), "end": end.isoformat(), "mode": payload.get("mode", "controlled"),
+                   "approval_rate_multiplier": payload.get("approval_rate_multiplier", 0.3),
+                   "dominant_decline_code": payload.get("dominant_decline_code")})
+    ACTIVE_INJECTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = ACTIVE_INJECTIONS_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(active), encoding="utf-8")
+    temporary.replace(ACTIVE_INJECTIONS_FILE)
+
+
 def _read_history_end(gold_dir: Path):
     hist_db = gold_dir / HISTORICAL_DB_FILENAME
     if not hist_db.exists():
@@ -119,6 +147,28 @@ def default_sim_start(history_end: datetime | None) -> datetime:
     if candidate <= reference:
         candidate += timedelta(days=1)
     return candidate
+
+
+def _read_live_end(gold_dir: Path) -> datetime | None:
+    """Return the latest persisted live event so a restarted generator resumes time.
+
+    The live SQLite volume survives Machine restarts. Starting again from the
+    historical default would put new events behind its existing MAX(event_ts),
+    which leaves the detector looking at an older run while fresh injections
+    are silently consumed in the past.
+    """
+    path = gold_dir / LIVE_DB_FILENAME
+    if not path.exists():
+        return None
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2.0)
+        try:
+            row = connection.execute("SELECT MAX(event_ts) FROM live_attempts").fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return None
+    return _parse_sim_start(row[0]) if row and row[0] else None
 
 
 def _parse_sim_start(value: str) -> datetime:
@@ -143,6 +193,12 @@ class _PendingRetry:
     failed_attempt_number: int  # el intento que falló y disparó este retry
     amount: float
     canonical_decline_code: str  # código del intento original, reusado si el retry también falla
+    issuer_id: int | None
+
+
+def _issuer_id_for_rate_cell(country: str, issuing_bank: str) -> int | None:
+    """Return the issuer identity represented by a Mercado Pago rate cell."""
+    return next((issuer_id for issuer_id, bank in ISSUERS_BY_COUNTRY[country] if bank == issuing_bank), None)
 
 
 class LiveStreamGenerator:
@@ -158,7 +214,8 @@ class LiveStreamGenerator:
         self.rate_cells = enumerate_rate_cells()
         self.incidents = list(incidents or [])
         self._pending_retries = []
-        self.sim_now = sim_start or default_sim_start(_read_history_end(GOLD_DIR))
+        self.sim_now = sim_start or _read_live_end(GOLD_DIR) or default_sim_start(_read_history_end(GOLD_DIR))
+        self._restore_active_injections()
         self.events_emitted = 0
         self._trigger_file_consumed = False
         self._writer_ready_logged = False
@@ -173,6 +230,33 @@ class LiveStreamGenerator:
 
     def trigger_incident(self, incident: Incident):
         self.incidents.append(incident)
+
+    def _restore_active_injections(self) -> None:
+        """Rehydrate unexpired API scenarios after a process or Machine restart."""
+        try:
+            entries = json.loads(ACTIVE_INJECTIONS_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(entries, list):
+            return
+        active = []
+        for entry in entries:
+            try:
+                end = datetime.fromisoformat(entry["end"])
+                if end <= self.sim_now or not isinstance(entry.get("cell_filter"), dict):
+                    continue
+                remaining_minutes = max(1, math.ceil((end - self.sim_now).total_seconds() / 60))
+                self.trigger_incident(Incident(
+                    name=entry["name"], start=self.sim_now, duration_minutes=remaining_minutes,
+                    approval_rate_multiplier=float(entry.get("approval_rate_multiplier", 0.3)),
+                    cell_filter=entry["cell_filter"], dominant_decline_code=entry.get("dominant_decline_code"),
+                ))
+                active.append(entry)
+            except (KeyError, TypeError, ValueError):
+                continue
+        temporary = ACTIVE_INJECTIONS_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(active), encoding="utf-8")
+        temporary.replace(ACTIVE_INJECTIONS_FILE)
 
     def _check_trigger_file(self):
         if not TRIGGER_FILE.exists():
@@ -192,6 +276,7 @@ class LiveStreamGenerator:
                 dominant_decline_code=decline_code,
             )
             self.trigger_incident(incident)
+            _record_active_injection(payload, self.sim_now)
             if self.reveal_injections:
                 print(f"[live] incidente disparado vía trigger file: {incident.name} {incident.cell_filter}")
         finally:
@@ -213,7 +298,8 @@ class LiveStreamGenerator:
         return (ev.provider, vendor_payload, routing)
 
     def _maybe_schedule_retry(self, sim_now, provider, country, payment_method, merchant_id,
-                               linked_order_id, failed_attempt_number, amount, canonical_decline_code):
+                               linked_order_id, failed_attempt_number, amount, canonical_decline_code,
+                               issuer_id=None):
         if failed_attempt_number >= MAX_ATTEMPTS_PER_TRANSACTION:
             return
         base_recoverability = RECOVERY_RATE_BY_CANONICAL_CODE.get(canonical_decline_code, 0.0)
@@ -233,6 +319,7 @@ class LiveStreamGenerator:
                 failed_attempt_number=failed_attempt_number,
                 amount=amount,
                 canonical_decline_code=canonical_decline_code,
+                issuer_id=issuer_id,
             )
         )
 
@@ -246,7 +333,6 @@ class LiveStreamGenerator:
             success_lo, success_hi = RECOVERY_BY_ATTEMPT[r.failed_attempt_number]
             success_prob = self.rng.uniform(success_lo, success_hi)
             approved = self.rng.random() < success_prob
-            issuer_id = pick_issuer_id(self.rng, r.country) if r.provider == "mercadopago" else None
             ev = CanonicalEvent(
                 txn_id=str(uuid.uuid4()),
                 provider=r.provider,
@@ -256,14 +342,14 @@ class LiveStreamGenerator:
                 approved=approved,
                 canonical_decline_code=None if approved else r.canonical_decline_code,
                 created_dt=sim_now,
-                issuer_id=issuer_id,
+                issuer_id=r.issuer_id,
             )
             records.append(self._to_bronze_record(ev, r.merchant_id, r.linked_order_id, r.attempt_number))
             self.events_emitted += 1
             if not approved:
                 self._maybe_schedule_retry(
                     sim_now, r.provider, r.country, r.payment_method, r.merchant_id,
-                    r.linked_order_id, r.attempt_number, r.amount, r.canonical_decline_code,
+                    r.linked_order_id, r.attempt_number, r.amount, r.canonical_decline_code, r.issuer_id,
                 )
         return records
 
@@ -295,7 +381,7 @@ class LiveStreamGenerator:
             for _ in range(n):
                 approved = self.rng.random() < eff_rate
                 merchant_id = weighted_choice(self.rng, MERCHANT_WEIGHTS)
-                issuer_id = pick_issuer_id(self.rng, cell.country) if cell.provider == "mercadopago" else None
+                issuer_id = _issuer_id_for_rate_cell(cell.country, cell.issuing_bank) if cell.provider == "mercadopago" else None
                 code = None if approved else (forced_code or weighted_choice(self.rng, CANONICAL_DECLINE_WEIGHTS))
                 amount = self._sample_amount(cell.country)
                 order_id = f"ord_{uuid.uuid4()}"
@@ -315,8 +401,8 @@ class LiveStreamGenerator:
                 if not approved:
                     self._maybe_schedule_retry(
                         sim_now, cell.provider, cell.country, cell.payment_method,
-                        merchant_id, order_id, failed_attempt_number=1, amount=amount,
-                        canonical_decline_code=code,
+                        merchant_id, order_id, failed_attempt_number=1, amount=amount, canonical_decline_code=code,
+                        issuer_id=issuer_id,
                     )
         return records
 
@@ -364,6 +450,10 @@ def main():
     parser.add_argument("--duration", type=float, default=90.0, help="segundos reales; 0 = indefinido")
     parser.add_argument("--tick-interval", type=float, default=0.2)
     parser.add_argument(
+        "--speed-multiplier", type=float, default=DEMO_SPEED_MULTIPLIER,
+        help="simulated-time multiplier; defaults to the local demo speed",
+    )
+    parser.add_argument(
         "--sim-start", type=_parse_sim_start,
         help="override simulated start (ISO UTC); default is the next 12:00 UTC after history_end",
     )
@@ -378,8 +468,8 @@ def main():
     live_db_path = GOLD_DIR / LIVE_DB_FILENAME
     gold_writer = GoldWriter(db_path=live_db_path)
     gen = LiveStreamGenerator(seed=args.seed, gold_writer=gold_writer, sim_start=args.sim_start,
-                              reveal_injections=args.reveal_injections)
-    print(f"[live] arrancando en sim_now={gen.sim_now.isoformat()} speed={DEMO_SPEED_MULTIPLIER}x")
+                              speed_multiplier=args.speed_multiplier, reveal_injections=args.reveal_injections)
+    print(f"[live] arrancando en sim_now={gen.sim_now.isoformat()} speed={args.speed_multiplier}x")
     print(f"[live] escribiendo a Bronze + Gold (live_attempts) en {live_db_path}")
     try:
         gen.run(duration_real_seconds=(None if args.duration == 0 else args.duration), tick_interval=args.tick_interval)

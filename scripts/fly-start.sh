@@ -34,16 +34,27 @@ trap cleanup EXIT INT TERM
 python scripts/web_server.py --status-file "$status_file" &
 web_pid=$!
 
-# A fresh volume needs the historical artifact before the live writer starts.
-if [[ ! -f /data/gold/historical.duckdb || ! -f /data/baselines_current ]]; then
-  echo "[boot] building history and baselines"
+# A fresh volume needs the historical artifact and a baseline before the live
+# writer starts. Keep these checks separate: a missing baseline must not force
+# an expensive regeneration of history that is already persisted on the volume.
+if [[ ! -f /data/gold/historical.duckdb ]]; then
+  echo "[boot] building history"
   python -m pipeline.generator.generate_historical_aggregates --seed 42
-  python -m agent_workflow.analysis.t1 --store gold
+fi
+if [[ ! -f /data/baselines_current ]]; then
+  echo "[boot] building baselines"
+  # T1 also runs a full historical detection replay. That is valuable in CI,
+  # but it delays production startup by many minutes and can be interrupted
+  # before the baseline pointer is written. Fly only needs the artifact here.
+  python -m agent_workflow.analysis.t1 --store gold --build-only
 else
-  echo "[boot] using existing volume"
+  echo "[boot] using existing history and baselines"
 fi
 
-python -m pipeline.generator.generate_live_stream --duration 0 &
+# The detector needs to evaluate each simulated minute before the generator
+# advances past it. Fly therefore runs at real-time pace; local demos retain
+# the generator's 10x default unless they opt in to this variable.
+python -m pipeline.generator.generate_live_stream --duration 0 --speed-multiplier "${NEXTWAVE_LIVE_SPEED_MULTIPLIER:-1}" &
 generator_pid=$!
 
 live_ready=false
