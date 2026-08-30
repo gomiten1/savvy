@@ -1,0 +1,6 @@
+entity_type,entity,contact
+provider,P1,Ana Rivera (P1 operations)
+provider,P2,Juan Tellez (P2 operations)
+provider,P3,Marta Souza (P3 operations)
+merchant,M1,Diego Mora (PagoTotal merchant success)
+bank,B7,Carla Nunes (bank relationship manager)
