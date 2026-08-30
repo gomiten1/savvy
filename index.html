@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Savvy conversion incident control room">
+    <link rel="icon" type="image/svg+xml" href="savvy.svg">
+    <title>Savvy — Conversion Control Room</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="dashboard.css?v=20260830">
+    <script src="dashboard-data.js" defer></script>
+    <script src="dashboard-utils.js" defer></script>
+    <script src="dashboard-index.js" defer></script>
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to incident dashboard</a>
+
+    <header class="page-shell topbar">
+        <a class="brand" href="index.html" aria-label="Savvy conversion control room home">
+            <span class="brand-logo"><img src="savvy.png" alt="Savvy"></span>
+            <span class="brand-copy">
+                <span class="brand-context"></span>
+            </span>
+        </a>
+    </header>
+
+    <main id="main-content" class="page-shell" tabindex="-1">
+        <section id="loadingState" class="loading-shell" role="status" aria-live="polite" aria-label="Loading incident reports">
+            <img class="loading-logo" src="savvy.png" alt="Savvy">
+            <p class="loading-copy">Loading the latest incident reports…</p>
+            <div class="summary-grid" aria-hidden="true">
+                <div class="skeleton skeleton--summary"></div>
+                <div class="skeleton skeleton--summary"></div>
+                <div class="skeleton skeleton--summary"></div>
+                <div class="skeleton skeleton--summary"></div>
+            </div>
+            <div class="overview-grid" aria-hidden="true">
+                <div class="skeleton skeleton--panel"></div>
+                <div class="skeleton skeleton--panel"></div>
+            </div>
+        </section>
+
+        <div id="dashboardApp" class="is-hidden" aria-busy="true">
+            <section class="dashboard-header" aria-labelledby="dashboard-title">
+                <div class="dashboard-header__title">
+                    <p class="eyebrow">Payments operations</p>
+                    <h1 id="dashboard-title">Conversion incident control</h1>
+                    <p class="header-copy">Live revenue risk across payment routes.</p>
+                </div>
+            </section>
+
+            <section id="summaryGrid" class="summary-grid" aria-label="Open incident summary"></section>
+
+            <section class="overview-grid" aria-label="Aggregate incident analysis">
+                <article id="exposurePanel" class="panel"></article>
+                <article id="severityPanel" class="panel"></article>
+            </section>
+
+            <section id="incident-log" class="incident-section" aria-labelledby="incident-log-title">
+                <div class="incident-section-header">
+                    <div>
+                    <p class="eyebrow">Live reports</p>
+                    <h2 id="incident-log-title">Incident log</h2>
+                    <p class="panel-description">Latest report per incident.</p>
+                    </div>
+                    <p id="filteredCount" class="topbar-note" aria-live="polite"></p>
+                </div>
+
+                <div class="filter-panel" aria-label="Incident filters">
+                    <label class="filter-search" for="incidentSearch">
+                        <span class="field-label filter-label">Search</span>
+                        <input id="incidentSearch" type="search" placeholder="Route or incident ID" autocomplete="off">
+                    </label>
+                    <div class="filter-set" role="group" aria-label="Filter by status">
+                        <span class="field-label filter-label">Status</span>
+                        <button class="filter-button" type="button" data-status-filter="all" aria-pressed="true">All</button>
+                        <button class="filter-button" type="button" data-status-filter="open" aria-pressed="false">Open</button>
+                        <button class="filter-button" type="button" data-status-filter="resolved" aria-pressed="false">Resolved</button>
+                    </div>
+                    <div class="filter-set" role="group" aria-label="Filter by severity">
+                        <span class="field-label filter-label">Severity</span>
+                        <button class="filter-button" type="button" data-severity-filter="all" aria-pressed="true">All</button>
+                        <button class="filter-button" type="button" data-severity-filter="S1" aria-pressed="false">S1 · Critical</button>
+                        <button class="filter-button" type="button" data-severity-filter="S2" aria-pressed="false">S2 · Major</button>
+                        <button class="filter-button" type="button" data-severity-filter="S3" aria-pressed="false">S3 · Moderate</button>
+                        <button class="filter-button" type="button" data-severity-filter="Monitoring" aria-pressed="false">Monitoring</button>
+                    </div>
+                    <label class="filter-select-wrap" for="confidenceFilter">
+                        <span class="field-label filter-label">Confidence</span>
+                        <select id="confidenceFilter" class="filter-select">
+                            <option value="all">All</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="insufficient_evidence">Evidence limited</option>
+                        </select>
+                    </label>
+                    <label class="filter-select-wrap" for="sortOrder">
+                        <span class="field-label filter-label">Order by</span>
+                        <select id="sortOrder" class="filter-select">
+                            <option value="risk">Highest risk</option>
+                            <option value="burn">Money at risk</option>
+                            <option value="drop">Largest drop</option>
+                            <option value="attempts">Affected attempts</option>
+                            <option value="recent">Newest detected</option>
+                        </select>
+                    </label>
+                    <button id="resetFilters" class="button button--secondary" type="button" disabled>Reset filters</button>
+                </div>
+
+                <div id="incidentList" class="incident-list"></div>
+            </section>
+        </div>
+    </main>
+
+    <footer class="page-shell footer-note">Incident reports · UTC</footer>
+
+    <noscript>
+        <style>#loadingState { display: none !important; }</style>
+        <div class="page-shell error-state">
+            <div class="error-state__mark" aria-hidden="true">!</div>
+            <h1>JavaScript is required to render incident reports</h1>
+            <p>Enable JavaScript to load the live dashboard data.</p>
+        </div>
+    </noscript>
+</body>
+</html>
