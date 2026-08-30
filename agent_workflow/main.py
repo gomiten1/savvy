@@ -7,12 +7,13 @@ import queue
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from agent_workflow.agent.run import DiagnosisRunner
 from agent_workflow.agent.tools import DiagnosisTools
 from agent_workflow.baselines.build import build, write_version
 from agent_workflow.baselines.load import BaselineLookup
-from agent_workflow.config import BUCKET_SECONDS, WINDOW_BUCKETS
+from agent_workflow.config import BUCKET_SECONDS, WINDOW_BUCKETS, load_gates
 from agent_workflow.detect.cluster import cluster
 from agent_workflow.detect.registry import IncidentRegistry
 from agent_workflow.detect.scan import scan
@@ -24,7 +25,13 @@ from agent_workflow.store.mock import MockStore
 
 
 class Workflow:
-    def __init__(self, store: MockStore, baselines: BaselineLookup, *, data_dir: str = "data") -> None:
+    def __init__(self, store: MockStore, baselines: BaselineLookup, *, data_dir: str = "data",
+                 recompute_hour: int = 0, freeze_gates: bool = False) -> None:
+        self.store, self.data_dir = store, data_dir
+        self.baselines, self.gates = baselines, load_gates(data_dir)
+        self.recompute_hour, self.freeze_gates = recompute_hour, freeze_gates
+        self._artifact_signature = self._pointer_signature()
+        self._last_recompute_day = None
         self.poster = poster_from_env()
         self.memory = IncidentRepository(f"{data_dir}/incidents.db")
         self.publisher = ReportPublisher(f"{data_dir}/reports.db")
@@ -35,6 +42,46 @@ class Workflow:
         self.runner = DiagnosisRunner(DiagnosisTools(store, baselines, self.memory))
         self._diagnoses = {}
         self._worker = threading.Thread(target=self._run_worker, daemon=True, name="diagnosis-worker")
+
+    def _pointer_signature(self):
+        result = []
+        for name in ("baselines_current", "gates_current"):
+            path = Path(self.data_dir) / name
+            try:
+                result.append((name, path.stat().st_mtime_ns, path.read_text().strip()))
+            except FileNotFoundError:
+                result.append((name, None, None))
+        return tuple(result)
+
+    def reload_artifacts(self) -> bool:
+        """Adopt a complete new baseline/gates pair between detector ticks."""
+        signature = self._pointer_signature()
+        if signature == self._artifact_signature:
+            return False
+        baselines = BaselineLookup.from_data_dir(self.data_dir)
+        gates = load_gates(self.data_dir)
+        self.baselines, self.gates = baselines, gates
+        self.registry.baselines = baselines
+        self.runner.tools.baselines = baselines
+        self._artifact_signature = signature
+        print(f"[recompute] reloaded baseline + gates artifacts")
+        return True
+
+    def maybe_schedule_recompute(self, tick: datetime) -> None:
+        if not self.recompute_hour or tick.hour != self.recompute_hour or tick.date() == self._last_recompute_day:
+            return
+        self._last_recompute_day = tick.date()
+
+        def run() -> None:
+            from agent_workflow.recalibrate import recompute
+            try:
+                record = recompute(self.store, data_dir=self.data_dir, through=tick,
+                                   freeze_gates=self.freeze_gates)
+                print(f"[recompute] completed {record['baseline']} / {record['gates']}")
+            except Exception as error:  # Keep the live detector running on a failed candidate.
+                print(f"[recompute] aborted: {error}")
+
+        threading.Thread(target=run, daemon=True, name="nightly-recompute").start()
 
     def start(self) -> None:
         self._worker.start()
@@ -81,7 +128,8 @@ def run_csv_replay(args) -> None:
     try:
         tick = start + timedelta(seconds=BUCKET_SECONDS * WINDOW_BUCKETS)
         while tick <= end:
-            signals = scan(store, workflow.registry.baselines, tick)
+            workflow.reload_artifacts()
+            signals = scan(store, workflow.registry.baselines, tick, gates=workflow.gates)
             workflow.registry.tick(cluster(signals), tick)
             print(f"{tick.isoformat()} · {len(signals)} signals · {len(workflow.registry.open_incidents())} open incidents")
             tick += timedelta(seconds=BUCKET_SECONDS)
@@ -98,7 +146,8 @@ def run_live(args) -> None:
     from agent_workflow.store.gold import GoldStore
 
     store = GoldStore()
-    workflow = Workflow(store, BaselineLookup.from_data_dir(args.data_dir), data_dir=args.data_dir)
+    workflow = Workflow(store, BaselineLookup.from_data_dir(args.data_dir), data_dir=args.data_dir,
+                        recompute_hour=args.recompute_hour, freeze_gates=args.freeze_gates)
     workflow.start()
     poll = max(0.2, args.poll_seconds)
     deadline = None if not args.duration else time.time() + args.duration
@@ -117,7 +166,9 @@ def run_live(args) -> None:
             advanced = False
             while latest - tick >= timedelta(seconds=BUCKET_SECONDS):
                 tick = tick + timedelta(seconds=BUCKET_SECONDS)
-                signals = scan(store, workflow.registry.baselines, tick)
+                workflow.reload_artifacts()
+                workflow.maybe_schedule_recompute(tick)
+                signals = scan(store, workflow.registry.baselines, tick, gates=workflow.gates)
                 workflow.registry.tick(cluster(signals), tick)
                 print(f"{tick.isoformat()} · MAX(event_ts)={latest.isoformat()} · {len(signals)} signals · "
                       f"{len(workflow.registry.open_incidents())} open incidents")
@@ -138,6 +189,9 @@ def main() -> None:
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--duration", type=float, default=0.0, help="live mode: real seconds, 0 = until Ctrl+C")
     parser.add_argument("--poll-seconds", type=float, default=1.5, help="live mode: MAX(event_ts) poll interval")
+    parser.add_argument("--recompute-hour", type=int, choices=range(24), default=0,
+                        metavar="HOUR", help="simulated UTC hour to run nightly recompute; 0 disables it")
+    parser.add_argument("--freeze-gates", action="store_true", help="rebuild the baseline but retain current gates")
     args = parser.parse_args()
     if args.live:
         run_live(args)

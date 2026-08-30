@@ -1,0 +1,40 @@
+# Change `app` before the first `fly deploy`.
+app = "savvy"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PYTHONUNBUFFERED = "1"
+
+[processes]
+  app = "/app/scripts/fly-start.sh"
+
+[[http_service]]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    timeout = "2s"
+    path = "/healthz"
+
+[[restart]]
+  policy = "always"
+  processes = ["app"]
+
+# The generator and detector intentionally run in this one Machine so they
+# share live.sqlite. This volume retains history, baselines, and incident data.
+[[mounts]]
+  source = "nextwave_data"
+  destination = "/data"
+  initial_size = "1gb"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "1gb"

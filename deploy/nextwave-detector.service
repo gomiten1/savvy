@@ -1,0 +1,17 @@
+[Unit]
+Description=Nextwave payment monitor
+After=network.target nextwave-live-generator.service
+Requires=nextwave-live-generator.service
+
+[Service]
+Type=simple
+User=nextwave
+WorkingDirectory=/opt/nextwave
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/nextwave/nextwave.env
+ExecStart=/usr/bin/env /opt/nextwave/.venv/bin/python -m agent_workflow.main --live
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

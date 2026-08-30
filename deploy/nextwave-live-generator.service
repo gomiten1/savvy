@@ -1,0 +1,15 @@
+[Unit]
+Description=Nextwave live payment generator
+After=network.target
+
+[Service]
+Type=simple
+User=nextwave
+WorkingDirectory=/opt/nextwave
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/env /opt/nextwave/.venv/bin/python -m pipeline.generator.generate_live_stream --duration 0
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

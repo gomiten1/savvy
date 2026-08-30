@@ -1,0 +1,4 @@
+country,methods,currency
+MX,card|oxxo|wallet,MXN
+BR,card|pix|boleto,BRL
+CO,card|pse|wallet,COP

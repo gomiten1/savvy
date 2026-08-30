@@ -57,6 +57,11 @@ from pipeline.silver.normalize import normalize_batch
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 GOLD_DIR = DATA_DIR / GOLD_DIRNAME
 TRIGGER_FILE = DATA_DIR / "live" / "incident_trigger.json"
+# The historical generator can finish during the thin overnight period.  Starting
+# live there turns sparse merchant splits into misleading near-100% baselines.
+# Pick a stable, daytime hour *after* history_end so live rows still land in the
+# live database rather than overlapping the historical artifact.
+DEFAULT_LIVE_START_HOUR_UTC = 12
 
 # ASUNCIÓN sobre RECOVERY_BY_ATTEMPT (ver docs/decision_log.md): la clave N
 # es "probabilidad de que el reintento que sigue al intento fallido N tenga
@@ -106,6 +111,25 @@ def _read_history_end(gold_dir: Path):
     return datetime.strptime(row[0], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
+def default_sim_start(history_end: datetime | None) -> datetime:
+    """Return the next 12:00 UTC after history_end (or now when no history exists)."""
+    reference = history_end or datetime.now(timezone.utc)
+    candidate = reference.replace(hour=DEFAULT_LIVE_START_HOUR_UTC, minute=0, second=0, microsecond=0)
+    if candidate <= reference:
+        candidate += timedelta(days=1)
+    return candidate
+
+
+def _parse_sim_start(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected ISO timestamp, e.g. 2026-08-31T12:00:00Z") from exc
+    if parsed.tzinfo is None:
+        raise argparse.ArgumentTypeError("timestamp must include a timezone")
+    return parsed.astimezone(timezone.utc)
+
+
 @dataclass
 class _PendingRetry:
     scheduled_sim_dt: datetime
@@ -133,7 +157,7 @@ class LiveStreamGenerator:
         self.rate_cells = enumerate_rate_cells()
         self.incidents = list(incidents or [])
         self._pending_retries = []
-        self.sim_now = sim_start or _read_history_end(GOLD_DIR) or datetime.now(timezone.utc)
+        self.sim_now = sim_start or default_sim_start(_read_history_end(GOLD_DIR))
         self.events_emitted = 0
         self._trigger_file_consumed = False
         # DATA-CONTRACT.md: "el injector must NOT tell us qué inyectó" — el
@@ -329,6 +353,10 @@ def main():
     parser.add_argument("--duration", type=float, default=90.0, help="segundos reales; 0 = indefinido")
     parser.add_argument("--tick-interval", type=float, default=0.2)
     parser.add_argument(
+        "--sim-start", type=_parse_sim_start,
+        help="override simulated start (ISO UTC); default is the next 12:00 UTC after history_end",
+    )
+    parser.add_argument(
         "--reveal-injections", action="store_true",
         help="loguea qué incidente se disparó -- NO usar durante un trial-by-fire real",
     )
@@ -338,7 +366,8 @@ def main():
 
     live_db_path = GOLD_DIR / LIVE_DB_FILENAME
     gold_writer = GoldWriter(db_path=live_db_path)
-    gen = LiveStreamGenerator(seed=args.seed, gold_writer=gold_writer, reveal_injections=args.reveal_injections)
+    gen = LiveStreamGenerator(seed=args.seed, gold_writer=gold_writer, sim_start=args.sim_start,
+                              reveal_injections=args.reveal_injections)
     print(f"[live] arrancando en sim_now={gen.sim_now.isoformat()} speed={DEMO_SPEED_MULTIPLIER}x")
     print(f"[live] escribiendo a Bronze + Gold (live_attempts) en {live_db_path}")
     try:

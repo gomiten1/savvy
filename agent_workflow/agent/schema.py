@@ -19,6 +19,8 @@ class Diagnosis:
     action_id: str = "monitor_only"
     action_parameters: dict[str, str] = field(default_factory=dict)
     recommended_action: str = "no_safe_action"
+    # Built by our code from the catalogue + deterministic figures, never by the model.
+    next_step: str = ""
     ops_explanation: str = "Investigation is inconclusive."
     exec_one_liner: str = "Investigation is inconclusive; continue monitoring."
     low_confidence_reason: str | None = None  # internal only; never render it

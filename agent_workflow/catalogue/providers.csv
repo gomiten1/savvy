@@ -1,5 +1,5 @@
-provider,countries,methods,role
-stripe,MX|BR|CO,card|oxxo|wallet|pix|boleto|pse,gateway
-adyen,MX|BR|CO,card|oxxo|wallet|pix|boleto|pse,acquirer
-mercadopago,MX|BR|CO,card|oxxo|wallet|pix|boleto|pse,gateway
-dlocal,MX|BR|CO,card|oxxo|wallet|pix|boleto|pse,acquirer
+provider,countries,role,exposes_issuer
+stripe,MX|BR|CO,gateway,false
+adyen,MX|BR|CO,acquirer,false
+mercadopago,MX|BR|CO,gateway,true
+dlocal,MX|BR|CO,acquirer,false

@@ -19,7 +19,9 @@ def format_root_alert(incident) -> str:
         f"Incident `{incident.incident_id}` · detected {detected}",
         f"Conversion {anchor.baseline_rate:.1%} → {anchor.observed_rate:.1%} "
         f"({(anchor.baseline_rate - anchor.observed_rate) * 100:.1f}pp drop)",
-        f"Blast radius {incident.blast_radius:.1%} · {anchor.attempts} attempts / {anchor.lost_approvals:.1f} lost approvals per window",
+        # `blast_radius` is the same number as the pp drop above (economics.blast_radius),
+        # so printing it here labelled differently read as two independent findings.
+        f"{anchor.attempts} attempts / {anchor.lost_approvals:.1f} lost approvals per window",
         f"Baseline: {anchor.baseline_source} · cost basis: {incident.cost_basis}",
     ))
 
@@ -36,14 +38,26 @@ def format_storm_summary(incidents) -> str:
 
 
 def format_diagnosis(incident, diagnosis) -> str:
-    """Render only validated diagnosis fields; internal telemetry stays private."""
+    """Render only validated diagnosis fields; internal telemetry stays private.
+
+    The exec one-liner leads the thread because the root message cannot carry it -- the
+    root posts on open, before the agent has run (D29).  Its money line is read off the
+    incident, never off the model, so it can never disagree with the root message (D48).
+    """
+    onset = incident.onset_ts.isoformat().replace("+00:00", "Z")
     evidence = diagnosis.evidence or [{"claim": "No conclusive evidence", "support": "Further investigation required."}]
     evidence_lines = [f"• {item['claim']} — {item['support']}" for item in evidence]
     alternatives = diagnosis.alternatives_ruled_out or ["No alternative was conclusively ruled out."]
-    return "\n".join((
+    lines = [
+        f"*{diagnosis.exec_one_liner}*",
+        f"${incident.burn_rate_usd_hour:,.0f}/hr · ${incident.cumulative_loss_usd:,.0f} lost since "
+        f"{onset} · cost basis {incident.cost_basis}",
         f"*Diagnosis: {diagnosis.confidence.replace('_', ' ')}* — {diagnosis.root_cause}",
         diagnosis.ops_explanation,
         "*Evidence*", *evidence_lines,
         "*Alternatives checked*", *(f"• {item}" for item in alternatives),
         f"*Recommended action:* {diagnosis.recommended_action}",
-    ))
+    ]
+    if diagnosis.next_step:
+        lines.append(f"*Next step:* {diagnosis.next_step}")
+    return "\n".join(lines)

@@ -78,13 +78,17 @@ class IncidentRegistry:
         for incident in self.open_incidents():
             incident.last_evaluated_at = now
         for candidate in clusters:
-            incident = self._match(candidate)
-            if incident:
+            related = self._matches(candidate)
+            if related:
+                # Every lattice-related open incident counts as seen this tick, not just
+                # the one that absorbs the update.  Otherwise a cluster related to two
+                # open incidents starves the loser into a false resolve.
+                matched.update(incident.incident_id for incident in related)
+                incident = related[0]
                 incident.current_anchor = candidate.anchor
                 incident.burn_rate_usd_hour = burn_rate_usd_hour(candidate.anchor)
                 incident.blast_radius = blast_radius(candidate.anchor)
                 incident.miss_streak = 0
-                matched.add(incident.incident_id)
                 if self._is_material_change(incident, now) and self.on_material_change:
                     self.on_material_change(incident)
                 continue
@@ -136,12 +140,18 @@ class IncidentRegistry:
         )
         return burn_rate_doubled or changed_lattice_branch
 
-    def _match(self, candidate: Cluster) -> Incident | None:
+    def _matches(self, candidate: Cluster) -> list[Incident]:
+        """Open incidents this cluster belongs to, nearest in the lattice first.
+
+        A cluster anchored on `{provider: adyen}` is related to both `adyen x MX` and
+        `adyen x BR`.  The most specific identity wins the update -- impact alone would
+        hand every ambiguous cluster to whichever incident happens to be larger.
+        """
         matches = [incident for incident in self.open_incidents()
                    if lattice_related(incident.identity_cell, candidate.anchor.cell)]
-        if not matches:
-            return None
-        return max(matches, key=lambda incident: incident.current_anchor.lost_approvals)
+        return sorted(matches, key=lambda incident: (len(incident.identity_cell),
+                                                     incident.current_anchor.lost_approvals),
+                      reverse=True)
 
     def _open(self, candidate: Cluster, now: datetime) -> Incident:
         self._sequence += 1
@@ -160,7 +170,10 @@ class IncidentRegistry:
     def _post_new_alerts(self, newly_opened: Iterable[Incident]) -> None:
         """Post only the top three roots when one detector tick opens a storm."""
         candidates = [incident for incident in newly_opened if incident.status == "open"]
-        candidates.sort(key=lambda incident: incident.burn_rate_usd_hour, reverse=True)
+        # D43: burn rate primary, blast radius then lost approvals as deterministic
+        # tiebreakers, so two similar-burn incidents have a stable order.
+        candidates.sort(key=lambda incident: (incident.burn_rate_usd_hour, incident.blast_radius,
+                                              incident.current_anchor.lost_approvals), reverse=True)
         already_announced = sum(1 for incident in self.open_incidents()
                                 if incident.root_message_id not in (None, "suppressed"))
         available = max(0, MAX_CONCURRENT_ALERTS - already_announced)
@@ -171,12 +184,15 @@ class IncidentRegistry:
                 incident.root_message_id = self.poster.post_root(format_root_alert(incident))
             if self.on_open:
                 self.on_open(incident)
-        if suppressed:
-            for incident in suppressed:
-                incident.root_message_id = "suppressed"
-            if self.poster and not self._storm_summary_posted:
-                self.poster.post_root(format_storm_summary(suppressed))
-                self._storm_summary_posted = True
+        if not suppressed:
+            # Latching this forever would silence the summary for every later storm.
+            self._storm_summary_posted = False
+            return
+        for incident in suppressed:
+            incident.root_message_id = "suppressed"
+        if self.poster and not self._storm_summary_posted:
+            self.poster.post_root(format_storm_summary(suppressed))
+            self._storm_summary_posted = True
 
     def _backdate_onset(self, anchor: Signal, now: datetime) -> datetime:
         """Find the first contiguous bucket below its own baseline before detection."""

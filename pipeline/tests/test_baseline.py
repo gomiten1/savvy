@@ -24,7 +24,7 @@ from pathlib import Path
 import duckdb
 
 from pipeline.generator.generate_historical_aggregates import build_database
-from pipeline.generator.generate_live_stream import LiveStreamGenerator
+from pipeline.generator.generate_live_stream import LiveStreamGenerator, default_sim_start
 from pipeline.generator.inject_incidents import Incident
 from pipeline.generator.sampling import cell_id as make_cell_id
 from pipeline.domain.weights import MAX_ALERTS_PER_WEEK_NORMAL, ALERT_Z_THRESHOLD, ALERT_MIN_CONSECUTIVE_MINUTES
@@ -71,6 +71,16 @@ class ConfidenceClassificationTest(unittest.TestCase):
         self.assertEqual(classify_confidence(days_available=1, total_attempts=10), "insufficient_history")
         # historia completa pero volumen bajo -> insufficient_sample, no "reliable"
         self.assertEqual(classify_confidence(days_available=20, total_attempts=10), "insufficient_sample")
+
+
+class LiveStartTest(unittest.TestCase):
+    def test_default_start_is_next_daytime_hour_after_history(self):
+        history_end = datetime(2026, 8, 30, 5, 21, tzinfo=timezone.utc)
+        self.assertEqual(datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc), default_sim_start(history_end))
+
+    def test_default_start_never_overlaps_historical_data(self):
+        history_end = datetime(2026, 8, 30, 13, 0, tzinfo=timezone.utc)
+        self.assertEqual(datetime(2026, 8, 31, 12, 0, tzinfo=timezone.utc), default_sim_start(history_end))
 
 
 class BaselineFixtureTestCase(unittest.TestCase):

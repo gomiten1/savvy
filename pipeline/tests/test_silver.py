@@ -245,6 +245,15 @@ class BronzeStoreTest(TempStoresMixin, unittest.TestCase):
         records = store.read_all()
         self.assertEqual(len(records), 2)
 
+    def test_rotates_before_exceeding_configured_limit(self):
+        path = self.tmpdir / "events.jsonl"
+        store = BronzeStore(path=path, max_bytes=1)
+        store.append("stripe", STRIPE_EXAMPLE)
+        store.append("stripe", STRIPE_EXAMPLE)
+        self.assertTrue(path.exists())
+        self.assertTrue((self.tmpdir / "events.jsonl.1").exists())
+        self.assertEqual(1, len(store.read_all()))
+
 
 if __name__ == "__main__":
     unittest.main()

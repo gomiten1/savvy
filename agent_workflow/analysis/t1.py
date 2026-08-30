@@ -8,17 +8,15 @@ from datetime import datetime, timedelta, timezone
 
 from agent_workflow.baselines.build import build, write_version
 from agent_workflow.baselines.load import BaselineLookup
-from agent_workflow.config import BUCKET_SECONDS, MIN_ABS_DROP_PP, MIN_ATTEMPTS, SCAN_GROUPINGS, WINDOW_BUCKETS, Z_THRESHOLD
+from agent_workflow.config import BUCKET_SECONDS, Gates, SCAN_GROUPINGS, WINDOW_BUCKETS
 
 
 def _parse_ts(value: str) -> datetime:
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
-def run(store, start: datetime, end: datetime, data_dir: str) -> tuple[int, int]:
-    artifact = build(store, start, end)
-    write_version(artifact, data_dir)
-    lookup = BaselineLookup.from_data_dir(data_dir)
+def count_signals(store, lookup: BaselineLookup, start: datetime, end: datetime, gates: Gates) -> tuple[int, int]:
+    """Replay a range against an already-built candidate artifact without swapping it."""
     # Materialize each GROUP BY once.  The production path still polls `scan`; this
     # replay cache keeps calibration fast enough to run repeatedly during a demo.
     aggregates = {}
@@ -40,16 +38,22 @@ def run(store, start: datetime, end: datetime, data_dir: str) -> tuple[int, int]
                     totals[values][0] += attempts
                     totals[values][1] += approved
             for values, (attempts, approved) in totals.items():
-                if attempts < MIN_ATTEMPTS:
+                if attempts < gates.min_attempts:
                     continue
                 baseline = lookup.get(dict(zip(grouping, values)), tick)
                 if baseline is None or baseline.dispersion == 0:
                     continue
                 drop = baseline.rate - approved / attempts
-                if drop >= MIN_ABS_DROP_PP and drop / baseline.dispersion >= Z_THRESHOLD:
+                if drop >= gates.min_abs_drop_pp and drop / baseline.dispersion >= gates.z_threshold:
                     signals += 1
         tick += timedelta(seconds=BUCKET_SECONDS)
     return scans, signals
+
+
+def run(store, start: datetime, end: datetime, data_dir: str, gates: Gates | None = None) -> tuple[int, int]:
+    artifact = build(store, start, end)
+    write_version(artifact, data_dir)
+    return count_signals(store, BaselineLookup(artifact), start, end, gates or Gates())
 
 
 def _resolve_range(args, store) -> tuple[datetime, datetime]:

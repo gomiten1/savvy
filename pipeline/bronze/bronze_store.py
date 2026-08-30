@@ -12,6 +12,7 @@ info viaja como metadata propia del orquestador, no parseada del vendor. Ver
 docs/decision_log.md.
 """
 import json
+import os
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -19,13 +20,24 @@ from pathlib import Path
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "bronze"
 DEFAULT_PATH = DATA_DIR / "events.jsonl"
+DEFAULT_MAX_BYTES = 50 * 1024 * 1024
 
 
 class BronzeStore:
-    def __init__(self, path: Path = DEFAULT_PATH):
+    def __init__(self, path: Path = DEFAULT_PATH, max_bytes: int = DEFAULT_MAX_BYTES):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.max_bytes = max_bytes
         self._lock = threading.Lock()
+
+    def _rotate_if_needed(self, incoming_bytes: int) -> None:
+        """Keep one previous bronze segment; Bronze is not read by the live path."""
+        if self.max_bytes <= 0 or not self.path.exists():
+            return
+        if self.path.stat().st_size + incoming_bytes <= self.max_bytes:
+            return
+        rotated = self.path.with_name(f"{self.path.name}.1")
+        os.replace(self.path, rotated)
 
     def append(self, vendor: str, payload: dict, routing_metadata: dict = None) -> dict:
         record = {
@@ -37,6 +49,7 @@ class BronzeStore:
         }
         line = json.dumps(record, ensure_ascii=False)
         with self._lock:
+            self._rotate_if_needed(len(line.encode("utf-8")) + 1)
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
         return record
@@ -61,6 +74,7 @@ class BronzeStore:
         if not lines:
             return built
         with self._lock:
+            self._rotate_if_needed(sum(len(line.encode("utf-8")) + 1 for line in lines))
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
         return built

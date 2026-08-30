@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from typing import Mapping, Sequence
 
 from agent_workflow.baselines.load import BaselineLookup
-from agent_workflow.config import BUCKET_SECONDS, MIN_ABS_DROP_PP, MIN_ATTEMPTS, SCAN_GROUPINGS, WINDOW_BUCKETS, Z_THRESHOLD
+from agent_workflow.config import BUCKET_SECONDS, Gates, SCAN_GROUPINGS, WINDOW_BUCKETS
 from agent_workflow.store.interface import AttemptStore
 
 
@@ -28,8 +28,9 @@ class Signal:
 
 
 def scan(store: AttemptStore, baselines: BaselineLookup, end_ts: datetime, *, groupings: Sequence[Sequence[str]] = SCAN_GROUPINGS,
-         characterize: bool = True) -> list[Signal]:
+         characterize: bool = True, gates: Gates | None = None) -> list[Signal]:
     """Scan the five closed aggregate buckets ending at ``end_ts``."""
+    gates = gates or Gates()
     start_ts = end_ts - timedelta(seconds=BUCKET_SECONDS * WINDOW_BUCKETS)
     signals = []
     for grouping in groupings:
@@ -38,7 +39,7 @@ def scan(store: AttemptStore, baselines: BaselineLookup, end_ts: datetime, *, gr
             total = totals[row.dimensions]
             total[0] += row.attempts; total[1] += row.approved; total[2] += row.declined; total[3] += row.error; total[4] += row.amount_usd_total
         for values, (attempts, approved, declined, errors, amount) in totals.items():
-            if attempts < MIN_ATTEMPTS:
+            if attempts < gates.min_attempts:
                 continue
             cell = dict(zip(grouping, values))
             baseline = baselines.get(cell, end_ts)
@@ -47,7 +48,7 @@ def scan(store: AttemptStore, baselines: BaselineLookup, end_ts: datetime, *, gr
             observed = approved / attempts
             drop = baseline.rate - observed
             z_score = drop / baseline.dispersion
-            if drop < MIN_ABS_DROP_PP or z_score < Z_THRESHOLD:
+            if drop < gates.min_abs_drop_pp or z_score < gates.z_threshold:
                 continue
             if characterize:
                 # get_samples is ORDER BY event_ts DESC and capped, so counting codes
