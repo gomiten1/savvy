@@ -16,10 +16,10 @@ vendor). Ver pipeline/bronze/bronze_store.py y docs/decision_log.md.
 from datetime import datetime, timezone
 
 from pipeline.silver.parsers import parse, CURRENCY_TO_COUNTRY
-from pipeline.silver.bin_lookup import lookup_bank
-from pipeline.silver.decline_mapping import resolve_status
-from pipeline.generator.seasonality import minute_of_day, to_utc_iso
-from pipeline.generator.weights import FX_RATE_TO_USD
+from pipeline.domain.bin_lookup import lookup_bank
+from pipeline.domain.decline_mapping import resolve_status
+from pipeline.domain.seasonality import minute_of_day, to_utc_iso
+from pipeline.domain.weights import FX_RATE_TO_USD
 
 # país -> moneda local (inversa de CURRENCY_TO_COUNTRY, que ya vive en
 # parsers.py). Se usa para resolver `currency`/`amount_usd` cuando el

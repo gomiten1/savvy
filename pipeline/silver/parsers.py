@@ -9,8 +9,8 @@ También expone `extract_native_id`, usado por dedup.py ANTES de parsear
 """
 from datetime import datetime, timezone
 
-from pipeline.generator.vendor_shapes import CURRENCY_BY_COUNTRY, SITE_ID_BY_COUNTRY
-from pipeline.silver.decline_mapping import map_to_canonical
+from pipeline.domain.weights import CURRENCY_BY_COUNTRY, SITE_ID_BY_COUNTRY
+from pipeline.domain.decline_mapping import map_to_canonical
 
 CURRENCY_TO_COUNTRY = {v.upper(): k for k, v in CURRENCY_BY_COUNTRY.items()}
 SITE_ID_TO_COUNTRY = {v: k for k, v in SITE_ID_BY_COUNTRY.items()}

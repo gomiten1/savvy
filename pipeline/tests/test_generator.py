@@ -7,7 +7,7 @@ import random
 import unittest
 from datetime import datetime, timezone
 
-from pipeline.generator.weights import (
+from pipeline.domain.weights import (
     PROVIDER_WEIGHTS,
     COUNTRY_WEIGHTS,
     METHOD_WEIGHTS_BY_COUNTRY,
@@ -16,10 +16,10 @@ from pipeline.generator.weights import (
     APPROVAL_RATE,
     MIN_SAMPLE_SIZE_PER_CELL,
 )
-from pipeline.generator.seasonality import hourly_multiplier, weekday_multiplier, WEEKDAY_INDEX
+from pipeline.domain.seasonality import hourly_multiplier, weekday_multiplier, WEEKDAY_INDEX
 from pipeline.generator.sampling import enumerate_rate_cells, enumerate_recovery_cells, poisson_sample
 from pipeline.generator.vendor_shapes import CanonicalEvent, build_vendor_event
-from pipeline.silver.decline_mapping import (
+from pipeline.domain.decline_mapping import (
     CANONICAL_CODES,
     CANONICAL_TO_VENDOR_CODES,
     map_to_canonical,

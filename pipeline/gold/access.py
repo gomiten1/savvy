@@ -2,7 +2,8 @@
 La implementación real de la Sección 4 de DATA-CONTRACT.md:
 
     get_counts(start_ts, end_ts, bucket, group_by[], filters{})
-      -> rows de (bucket_ts, *group_by keys, attempts, approved, declined, error, amount_usd_total)
+      -> rows de (bucket_ts, bucket_granularity, *group_by keys, attempts,
+         approved, declined, error, amount_usd_total)
 
     get_samples(start_ts, end_ts, filters{}, limit)
       -> raw attempt rows (para citar evidencia en la alerta)
@@ -24,15 +25,22 @@ Cómo se resuelve un rango de tiempo:
     sirve desde las tablas precalculadas (rate_cells_minutely /
     decline_cells_hourly) — rápido, pero decline_code solo a resolución
     horaria (no se guardó más fino para no explotar el conteo de filas).
+    Cada fila trae `bucket_granularity` con la resolución REAL usada --
+    si pediste bucket="minute" con decline_code en group_by/filters, esto
+    silenciosamente cae a "hour" (no hay resolución más fina guardada), y
+    el campo te lo dice sin que tengas que leer este módulo.
   - la parte que cae DESPUÉS de `history_end` se sirve desde `live_attempts`
     (Generador B, grain real de 1 fila = 1 intento) -- ahí SÍ hay total
     flexibilidad, incluyendo minute-level + decline_code juntos, porque son
-    filas reales, no un agregado precalculado.
-  - si el rango pisa las dos, se consultan ambas fuentes y se concatena.
-    OJO: el bucket que cae justo en el límite puede aparecer como DOS filas
-    (una por fuente) en vez de una sola sumada -- para un demo de
-    hackathon no vale la pena el merge fino; quien consuma puede sumarlas
-    si le importa un bucket exacto en el borde.
+    filas reales, no un agregado precalculado. `bucket_granularity` acá
+    siempre coincide con lo pedido.
+  - si el rango pisa las dos, se consultan ambas fuentes y se mergean: un
+    bucket que cae justo en el límite y coincide en bucket_ts + todas las
+    dimensiones de group_by se suma en una sola fila antes de devolver --
+    quien consume nunca ve un mismo bucket partido en dos filas. (Un
+    bucket con distinta `bucket_granularity` entre las dos fuentes nunca
+    "choca" para el merge: produce un bucket_ts distinto por construcción,
+    así que dos resoluciones distintas nunca se suman entre sí por error.)
 
 get_samples() solo tiene sentido contra live_attempts (evidencia real fila
 por fila) -- sobre el histórico puro no hay filas individuales guardadas
@@ -50,7 +58,7 @@ from pipeline.gold.schema import (
     HISTORICAL_DB_FILENAME,
     LIVE_DB_FILENAME,
 )
-from pipeline.generator.weights import ERROR_STATUS_CANONICAL_CODES
+from pipeline.domain.weights import ERROR_STATUS_CANONICAL_CODES
 
 GOLD_DIR = Path(__file__).resolve().parents[2] / "data" / "gold"
 
@@ -105,7 +113,10 @@ def _query_rate_cells(conn, start_ts, end_ts, bucket, group_by, filters):
         GROUP BY bucket_ts{dims_sql}
         ORDER BY bucket_ts
     """
-    return _rows_as_dicts(conn.execute(sql, params))
+    rows = _rows_as_dicts(conn.execute(sql, params))
+    for row in rows:
+        row["bucket_granularity"] = bucket
+    return rows
 
 
 def _query_decline_cells(conn, start_ts, end_ts, bucket, group_by, filters):
@@ -136,6 +147,7 @@ def _query_decline_cells(conn, start_ts, end_ts, bucket, group_by, filters):
         row["approved"] = 0
         row["declined"] = 0 if is_error else declines
         row["error"] = declines if is_error else 0
+        row["bucket_granularity"] = effective_bucket
         rows.append(row)
     return rows
 
@@ -157,7 +169,29 @@ def _query_live_counts(conn, start_ts, end_ts, bucket, group_by, filters):
         ORDER BY bucket_ts
     """
     conn.row_factory = sqlite3.Row
-    return [dict(r) for r in conn.execute(sql, params)]
+    rows = [dict(r) for r in conn.execute(sql, params)]
+    for row in rows:
+        row["bucket_granularity"] = bucket
+    return rows
+
+
+_NUMERIC_FIELDS = ("attempts", "approved", "declined", "error", "amount_usd_total")
+
+
+def _merge_boundary_rows(rows: list, group_by) -> list:
+    """Suma filas que comparten bucket_ts + todas las dims de group_by --
+    pasa cuando el rango pisa historical.duckdb y live.sqlite y un bucket
+    cae justo en `history_end`. Preserva orden por bucket_ts."""
+    merged = {}
+    for row in rows:
+        key = (row["bucket_ts"],) + tuple(row.get(d) for d in group_by)
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = dict(row)
+        else:
+            for field in _NUMERIC_FIELDS:
+                existing[field] = existing.get(field, 0) + row.get(field, 0)
+    return sorted(merged.values(), key=lambda r: r["bucket_ts"])
 
 
 def get_counts(start_ts: str, end_ts: str, bucket: str = "minute", group_by=(), filters: dict = None, gold_dir=GOLD_DIR):
@@ -195,7 +229,7 @@ def get_counts(start_ts: str, end_ts: str, bucket: str = "minute", group_by=(), 
         finally:
             live_conn.close()
 
-    return rows
+    return _merge_boundary_rows(rows, group_by)
 
 
 def get_samples(start_ts: str, end_ts: str, filters: dict = None, limit: int = 50, gold_dir=GOLD_DIR):

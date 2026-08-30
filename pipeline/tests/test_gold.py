@@ -45,17 +45,17 @@ class GoldFixtureTest(unittest.TestCase):
         insert_rate_rows(
             hist_conn,
             [
-                ("2026-08-01T10:00:00Z", 600, 5, "merch_a", "stripe", "MX", "card", "unknown_bank", "stripe|MX|card|unknown_bank", 100, 90, 10, 0, 500.0),
-                ("2026-08-01T10:00:00Z", 600, 5, "merch_b", "stripe", "MX", "card", "unknown_bank", "stripe|MX|card|unknown_bank", 50, 40, 10, 0, 250.0),
-                ("2026-08-01T10:01:00Z", 601, 5, "merch_a", "stripe", "MX", "card", "unknown_bank", "stripe|MX|card|unknown_bank", 100, 95, 5, 0, 500.0),
+                {"time_bucket": "2026-08-01T10:00:00Z", "minute_of_day": 600, "weekday": 5, "merchant_id": "merch_a", "provider_id": "stripe", "country": "MX", "method": "card", "issuing_bank": "unknown_bank", "cell_id": "stripe|MX|card|unknown_bank", "attempts": 100, "approved": 90, "declined": 10, "error": 0, "amount_usd_total": 500.0},
+                {"time_bucket": "2026-08-01T10:00:00Z", "minute_of_day": 600, "weekday": 5, "merchant_id": "merch_b", "provider_id": "stripe", "country": "MX", "method": "card", "issuing_bank": "unknown_bank", "cell_id": "stripe|MX|card|unknown_bank", "attempts": 50, "approved": 40, "declined": 10, "error": 0, "amount_usd_total": 250.0},
+                {"time_bucket": "2026-08-01T10:01:00Z", "minute_of_day": 601, "weekday": 5, "merchant_id": "merch_a", "provider_id": "stripe", "country": "MX", "method": "card", "issuing_bank": "unknown_bank", "cell_id": "stripe|MX|card|unknown_bank", "attempts": 100, "approved": 95, "declined": 5, "error": 0, "amount_usd_total": 500.0},
             ],
         )
         # decline_cells_hourly: un código normal, un código "error"
         insert_decline_rows(
             hist_conn,
             [
-                ("2026-08-01T10:00:00Z", "merch_a", "stripe", "MX", "card", "unknown_bank", "51_insufficient_funds", "stripe|MX|card|51_insufficient_funds", 8, 4, 100.0),
-                ("2026-08-01T10:00:00Z", "merch_a", "stripe", "MX", "card", "unknown_bank", "91_96_network_timeout", "stripe|MX|card|91_96_network_timeout", 2, 1, 20.0),
+                {"hour_bucket": "2026-08-01T10:00:00Z", "merchant_id": "merch_a", "provider_id": "stripe", "country": "MX", "method": "card", "issuing_bank": "unknown_bank", "decline_code": "51_insufficient_funds", "cell_id": "stripe|MX|card|51_insufficient_funds", "declines": 8, "recovered": 4, "amount_usd_total": 100.0},
+                {"hour_bucket": "2026-08-01T10:00:00Z", "merchant_id": "merch_a", "provider_id": "stripe", "country": "MX", "method": "card", "issuing_bank": "unknown_bank", "decline_code": "91_96_network_timeout", "cell_id": "stripe|MX|card|91_96_network_timeout", "declines": 2, "recovered": 1, "amount_usd_total": 20.0},
             ],
         )
         # meta: history_end marca dónde termina lo precalculado
@@ -163,6 +163,77 @@ class GoldFixtureTest(unittest.TestCase):
     def test_invalid_filter_raises(self):
         with self.assertRaises(ValueError):
             get_counts("2026-08-01T09:00:00Z", "2026-08-01T11:00:00Z", filters={"nonsense": "x"}, gold_dir=self.gold_dir)
+
+    def test_bucket_granularity_reflects_minute_to_hour_downgrade(self):
+        # decline_code en group_by con bucket="minute" pedido -> no hay
+        # resolución de minuto guardada en decline_cells_hourly, así que
+        # cada fila debe confesar que en realidad quedó en "hour".
+        rows = get_counts(
+            "2026-08-01T09:00:00Z", "2026-08-01T11:00:00Z", bucket="minute",
+            group_by=["decline_code"], filters={"provider_id": "stripe", "country": "MX"},
+            gold_dir=self.gold_dir,
+        )
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["bucket_granularity"], "hour")
+
+    def test_bucket_granularity_matches_request_when_no_downgrade(self):
+        rows = get_counts("2026-08-01T09:00:00Z", "2026-08-01T11:00:00Z", bucket="minute", gold_dir=self.gold_dir)
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["bucket_granularity"], "minute")
+
+
+class BoundaryMergeTest(unittest.TestCase):
+    """history_end a mitad de hora (no en un límite de hora limpio) para
+    que una fila histórica y una fila en vivo caigan de verdad en el MISMO
+    bucket_ts bajo bucket="hour" -- GoldFixtureTest's history_end cae justo
+    en un límite de hora, por eso nunca ejercita este caso."""
+
+    def setUp(self):
+        self.tmpdir = Path(tempfile.mkdtemp())
+        self.gold_dir = self.tmpdir / "gold"
+        self.gold_dir.mkdir()
+
+        hist_conn = duckdb.connect(str(self.gold_dir / HISTORICAL_DB_FILENAME))
+        create_bulk_build_tables(hist_conn)
+        hist_conn.execute(DUCKDB_META_DDL)
+        insert_rate_rows(
+            hist_conn,
+            [
+                {"time_bucket": "2026-08-01T10:15:00Z", "minute_of_day": 615, "weekday": 5, "merchant_id": "merch_a", "provider_id": "stripe", "country": "MX", "method": "card", "issuing_bank": "unknown_bank", "cell_id": "stripe|MX|card|unknown_bank", "attempts": 100, "approved": 90, "declined": 10, "error": 0, "amount_usd_total": 500.0},
+            ],
+        )
+        hist_conn.execute("INSERT INTO meta VALUES ('history_end', '2026-08-01T10:30:00Z')")
+        hist_conn.close()
+
+        live_conn = sqlite3.connect(self.gold_dir / LIVE_DB_FILENAME)
+        create_live_tables(live_conn)
+        # mismo bucket de hora (10:00) que la fila histórica de arriba,
+        # pero después de history_end (10:30)
+        live_conn.execute(
+            "INSERT INTO live_attempts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "stripe:ch_9", "ord_9", 1, "2026-08-01T10:45:00Z", "merch_a", "stripe",
+                "card", "MX", "unknown_bank", "declined", "51_insufficient_funds", 10000, "MXN", 5.4,
+            ),
+        )
+        live_conn.commit()
+        live_conn.close()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_straddling_hour_bucket_returns_one_merged_row_not_two(self):
+        rows = get_counts(
+            "2026-08-01T09:00:00Z", "2026-08-01T12:00:00Z", bucket="hour", gold_dir=self.gold_dir
+        )
+        matching = [r for r in rows if r["bucket_ts"] == "2026-08-01T10:00:00Z"]
+        self.assertEqual(len(matching), 1, f"expected exactly one merged row, got {matching}")
+        row = matching[0]
+        self.assertEqual(row["attempts"], 101)  # 100 histórico + 1 en vivo
+        self.assertEqual(row["approved"], 90)
+        self.assertEqual(row["declined"], 11)  # 10 histórico + 1 en vivo
 
 
 class GoldWriterTest(unittest.TestCase):

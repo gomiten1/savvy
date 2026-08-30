@@ -27,7 +27,7 @@ from pipeline.generator.generate_historical_aggregates import build_database
 from pipeline.generator.generate_live_stream import LiveStreamGenerator
 from pipeline.generator.inject_incidents import Incident
 from pipeline.generator.sampling import cell_id as make_cell_id
-from pipeline.generator.weights import MAX_ALERTS_PER_WEEK_NORMAL, ALERT_Z_THRESHOLD, ALERT_MIN_CONSECUTIVE_MINUTES
+from pipeline.domain.weights import MAX_ALERTS_PER_WEEK_NORMAL, ALERT_Z_THRESHOLD, ALERT_MIN_CONSECUTIVE_MINUTES
 from pipeline.gold.schema import HISTORICAL_DB_FILENAME
 from pipeline.bronze.bronze_store import BronzeStore
 from pipeline.silver.dedup import Deduper
@@ -165,7 +165,7 @@ class LiveIncidentDetectionTest(BaselineFixtureTestCase):
         # prueba entera (<=90s reales = 15 min simulados) cae dentro de la
         # ventana del incidente, así que cualquier minuto-del-día de
         # referencia sirve para esta prueba de detección.
-        from pipeline.generator.seasonality import minute_of_day
+        from pipeline.domain.seasonality import minute_of_day
 
         score = store.score(cid, minute_of_day(incident_start), attempts, approvals, provider=provider)
         return attempts, approvals, score
@@ -229,6 +229,32 @@ class LiveIncidentDetectionTest(BaselineFixtureTestCase):
             "una celda no afectada no debería dispararse solo porque OTRAS celdas tienen incidentes",
         )
         bronze.clear()
+
+
+class LiveStreamSeasonalityTest(unittest.TestCase):
+    """Cobertura directa de que _generate_originals() aplica
+    volume_multiplier() -- sin esto, una regresión ahí solo se vería
+    indirectamente (o no se vería) a través de LiveIncidentDetectionTest."""
+
+    def _avg_records_per_tick(self, sim_start, n_ticks=30, tick_interval=0.2, seed=123):
+        tmpdir = Path(tempfile.mkdtemp())
+        bronze = BronzeStore(path=tmpdir / "events.jsonl")
+        gen = LiveStreamGenerator(seed=seed, sim_start=sim_start, bronze_store=bronze)
+        total = 0
+        for _ in range(n_ticks):
+            total += gen.tick(tick_interval)
+        bronze.clear()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return total / n_ticks
+
+    def test_peak_hour_generates_more_volume_than_valley_hour(self):
+        # mismo día (2026-08-01) para no mezclar con weekday_multiplier --
+        # solo varía la hora del día.
+        valley = datetime(2026, 8, 1, 3, 0, 0, tzinfo=timezone.utc)  # hourly_multiplier = 0.10
+        peak = datetime(2026, 8, 1, 21, 0, 0, tzinfo=timezone.utc)  # hourly_multiplier = 1.5
+        valley_avg = self._avg_records_per_tick(valley)
+        peak_avg = self._avg_records_per_tick(peak)
+        self.assertGreater(peak_avg, valley_avg)
 
 
 if __name__ == "__main__":

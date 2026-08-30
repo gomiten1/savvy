@@ -13,13 +13,13 @@ individual (stream en vivo), no como dimensión del baseline agregado.
 """
 from dataclasses import dataclass
 
-from pipeline.generator.weights import (
+from pipeline.domain.weights import (
     PROVIDER_WEIGHTS,
     COUNTRY_WEIGHTS,
     METHOD_WEIGHTS_BY_COUNTRY,
     CANONICAL_DECLINE_WEIGHTS,
 )
-from pipeline.silver.bin_lookup import issuers_for_country, UNKNOWN_BANK
+from pipeline.domain.bin_lookup import issuers_for_country, UNKNOWN_BANK
 
 PROVIDERS = tuple(PROVIDER_WEIGHTS)
 COUNTRIES = tuple(COUNTRY_WEIGHTS)

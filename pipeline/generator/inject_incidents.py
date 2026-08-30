@@ -13,7 +13,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from pipeline.generator.weights import MTTR_RANGE_MINUTES
+from pipeline.domain.weights import MTTR_RANGE_MINUTES
 
 
 @dataclass

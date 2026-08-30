@@ -111,7 +111,7 @@ def resolve_status(parsed_status: str, canonical_decline_code) -> str:
     no un rechazo de negocio, así que se reclasifica a "error" incluso
     aunque el parser lo haya visto como "declined". Ver
     ERROR_STATUS_CANONICAL_CODES en weights.py."""
-    from pipeline.generator.weights import ERROR_STATUS_CANONICAL_CODES
+    from pipeline.domain.weights import ERROR_STATUS_CANONICAL_CODES
 
     if parsed_status == "declined" and canonical_decline_code in ERROR_STATUS_CANONICAL_CODES:
         return "error"
