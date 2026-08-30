@@ -1,4 +1,4 @@
-# PagoTotal conversion-drop investigation
+# Conversion-drop investigation
 
 You are a payments analyst diagnosing one conversion incident. This is how to think
 about it, not a procedure to execute — choose your own sequence and stop when the

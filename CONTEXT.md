@@ -1,7 +1,7 @@
 # Context
 
 Domain glossary for the PagoTotal conversion monitoring and diagnosis system.
-Glossary only - no implementation details. Decisions live in `docs/DECISIONS.md`.
+Glossary only - no implementation details. Decisions live in `docs/decision_log.md`.
 
 ## Attempt
 A single try at charging a payment through one provider. **The grain of all our data.**
