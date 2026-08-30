@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Savvy incident report detail">
+    <link rel="icon" type="image/svg+xml" href="savvy.svg">
+    <title>Savvy — Incident Report</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="dashboard.css?v=20260830-1">
+    <script src="dashboard-data.js" defer></script>
+    <script src="dashboard-utils.js" defer></script>
+    <script src="dashboard-detail.js" defer></script>
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to incident report</a>
+
+    <header class="page-shell topbar">
+        <a class="brand" href="index.html" aria-label="Savvy conversion control room home">
+            <span class="brand-logo"><img src="savvy.png" alt="Savvy"></span>
+            <span class="brand-copy">
+                <span class="brand-context"></span>
+            </span>
+        </a>
+    </header>
+
+    <main id="main-content" class="page-shell detail-main" tabindex="-1">
+        <section id="loadingState" class="loading-shell" role="status" aria-live="polite" aria-label="Loading incident report">
+            <img class="loading-logo" src="savvy.png" alt="Savvy">
+            <p class="loading-copy">Loading the selected incident report…</p>
+            <div class="skeleton skeleton--summary" aria-hidden="true"></div>
+            <div class="detail-layout" aria-hidden="true">
+                <div class="skeleton skeleton--panel"></div>
+                <div class="skeleton skeleton--panel"></div>
+            </div>
+        </section>
+        <div id="detailApp" class="is-hidden" aria-busy="true"></div>
+    </main>
+
+    <footer class="page-shell footer-note">Incident report · UTC</footer>
+
+    <noscript>
+        <style>#loadingState { display: none !important; }</style>
+        <div class="page-shell error-state">
+            <div class="error-state__mark" aria-hidden="true">!</div>
+            <h1>JavaScript is required to render the incident report</h1>
+            <p>Enable JavaScript, then return to the incident log.</p>
+            <a class="button button--primary" href="index.html">Open incident log</a>
+        </div>
+    </noscript>
+</body>
+</html>
