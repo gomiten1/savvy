@@ -1014,12 +1014,12 @@ dl { margin: 0; }
     color: var(--ink-soft);
     font-size: 15px;
     line-height: 1.5;
-    margin: var(--space-4);
+    margin: var(--space-4) 0 0;
 }
 
 .narrative + .narrative { margin-top: var(--space-4); }
 
-.narrative-label { margin-bottom: var(--space-4); }
+.narrative-label { margin-bottom: var(--space-2); }
 
 .exec-summary {
     display: grid;
@@ -1077,8 +1077,8 @@ dl { margin: 0; }
 .entity-item__name { color: var(--ink-soft); font-size: 14px; font-weight: 700; }
 .entity-item__share { color: var(--indigo-900); font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
 
-.plain-list { padding-left: var(--space-5); color: var(--ink-soft); }
-.plain-list li { padding-left: var(--space-1); font-size: 14px; }
+.plain-list { padding-left: 0; color: var(--ink-soft); list-style-position: inside; }
+.plain-list li { padding-left: 0; font-size: 14px; }
 
 .empty-list {
     padding: var(--space-4);

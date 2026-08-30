@@ -27,6 +27,7 @@
 
     function setFeedStatus(message, hasError = false) {
         const status = document.getElementById('feedStatus');
+        if (!status) return;
         status.textContent = message;
         status.classList.toggle('system-status--error', hasError);
     }
