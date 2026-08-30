@@ -1,0 +1,4 @@
+method,card_based,issuing_bank_meaningful
+card,true,true
+pix,false,false
+spei,false,false
