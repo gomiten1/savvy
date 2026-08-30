@@ -1,4 +1,7 @@
 method,card_based,issuing_bank_meaningful
 card,true,true
+oxxo,false,false
+wallet,false,false
 pix,false,false
-spei,false,false
+boleto,false,false
+pse,false,false

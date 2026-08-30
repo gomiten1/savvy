@@ -50,10 +50,16 @@ def scan(store: AttemptStore, baselines: BaselineLookup, end_ts: datetime, *, gr
             if drop < MIN_ABS_DROP_PP or z_score < Z_THRESHOLD:
                 continue
             if characterize:
-                samples = store.get_samples(start_ts, end_ts, cell, attempts)
-                failures = Counter(row.decline_code for row in samples if row.status != "approved" and row.decline_code)
-                failure_total = sum(failures.values())
-                decline_code_mix = {code: count / failure_total for code, count in failures.items()} if failure_total else {}
+                # get_samples is ORDER BY event_ts DESC and capped, so counting codes
+                # off it biases toward the window's tail.  Prefer the store's own
+                # window-wide decline mix when it offers one (GoldStore does).
+                if hasattr(store, "get_decline_mix"):
+                    decline_code_mix = store.get_decline_mix(start_ts, end_ts, cell)
+                else:
+                    samples = store.get_samples(start_ts, end_ts, cell, attempts)
+                    failures = Counter(row.decline_code for row in samples if row.status != "approved" and row.decline_code)
+                    failure_total = sum(failures.values())
+                    decline_code_mix = {code: count / failure_total for code, count in failures.items()} if failure_total else {}
             else:
                 decline_code_mix = {}
             signals.append(Signal(cell, observed, baseline.rate, baseline.source, z_score, attempts * drop, attempts, approved,

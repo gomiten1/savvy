@@ -1,4 +1,5 @@
 provider,countries,methods,role
-P1,BR|MX|CO,card|pix|spei,gateway
-P2,BR|MX|CO,card|pix|spei,acquirer
-P3,BR|MX|CO,card|pix|spei,gateway
+stripe,MX|BR|CO,card|oxxo|wallet|pix|boleto|pse,gateway
+adyen,MX|BR|CO,card|oxxo|wallet|pix|boleto|pse,acquirer
+mercadopago,MX|BR|CO,card|oxxo|wallet|pix|boleto|pse,gateway
+dlocal,MX|BR|CO,card|oxxo|wallet|pix|boleto|pse,acquirer

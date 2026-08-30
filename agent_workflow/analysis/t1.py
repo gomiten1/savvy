@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from agent_workflow.baselines.build import build, write_version
 from agent_workflow.baselines.load import BaselineLookup
 from agent_workflow.config import BUCKET_SECONDS, MIN_ABS_DROP_PP, MIN_ATTEMPTS, SCAN_GROUPINGS, WINDOW_BUCKETS, Z_THRESHOLD
-from agent_workflow.store.mock import MockStore
 
 
-def run(store: MockStore, data_dir: str) -> tuple[int, int]:
-    attempts = store._attempts
-    start = attempts[0].event_ts.replace(second=0, microsecond=0)
-    end = attempts[-1].event_ts.replace(second=0, microsecond=0) + timedelta(minutes=1)
+def _parse_ts(value: str) -> datetime:
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+
+def run(store, start: datetime, end: datetime, data_dir: str) -> tuple[int, int]:
     artifact = build(store, start, end)
     write_version(artifact, data_dir)
     lookup = BaselineLookup.from_data_dir(data_dir)
@@ -52,10 +52,39 @@ def run(store: MockStore, data_dir: str) -> tuple[int, int]:
     return scans, signals
 
 
+def _resolve_range(args, store) -> tuple[datetime, datetime]:
+    if args.start and args.end:
+        return _parse_ts(args.start), _parse_ts(args.end)
+    if args.store == "gold":
+        # Leave a margin so the first rolling windows are complete.
+        start = _parse_ts(args.start) if args.start else store.history_start + timedelta(hours=1)
+        end = _parse_ts(args.end) if args.end else store.history_end
+        return start, end
+    # mock: derive from the CSV span, the pre-refactor behaviour.
+    attempts = store._attempts
+    start = _parse_ts(args.start) if args.start else attempts[0].event_ts.replace(second=0, microsecond=0)
+    end = _parse_ts(args.end) if args.end else attempts[-1].event_ts.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    return start, end
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--store", choices=("mock", "gold"), default="gold")
     parser.add_argument("--input", default="data/synthetic_backfill.csv")
     parser.add_argument("--data-dir", default="data")
+    parser.add_argument("--start", help="ISO YYYY-MM-DDTHH:MM:SSZ")
+    parser.add_argument("--end", help="ISO YYYY-MM-DDTHH:MM:SSZ")
     args = parser.parse_args()
-    scans, signals = run(MockStore.from_csv(args.input), args.data_dir)
+
+    if args.store == "gold":
+        from agent_workflow.store.gold import GoldStore
+
+        store = GoldStore()
+    else:
+        from agent_workflow.store.mock import MockStore
+
+        store = MockStore.from_csv(args.input)
+
+    start, end = _resolve_range(args, store)
+    scans, signals = run(store, start, end, args.data_dir)
     print(f"T1: {scans} scans, {signals} clean-history signals")

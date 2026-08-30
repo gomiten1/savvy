@@ -9,15 +9,19 @@ SCAN_GROUPINGS = tuple((dimension,) for dimension in SCAN_DIMENSIONS) + tuple(
     pair for pair in combinations(SCAN_DIMENSIONS, 2)
 )
 
-# The existing synthetic generator emits a traffic batch every five minutes.  Keep this
-# aligned with T0 until the live generator delivers one-minute gold aggregates.
-BUCKET_SECONDS = 300
-WINDOW_BUCKETS = 5
+# The pipeline gold layer serves only minute/hour/day grain (D71).  Match its minute
+# grain 1:1 so the adapter never re-aggregates in Python; same 25-minute window.
+BUCKET_SECONDS = 60
+WINDOW_BUCKETS = 25
 MIN_HISTORY_OBSERVATIONS = 2
 
-# Calibrated against the clean synthetic history by analysis.t1.
-Z_THRESHOLD = 4.0
-MIN_ABS_DROP_PP = 0.08
+# Calibrated by analysis.t1 replaying the pipeline's clean 14-day gold history
+# (20,076 scans, ~5M cell-window evaluations, zero signals).  See docs/T1-RESULTS.md.
+# First zero on the (drop, z) frontier: at drop >= 15pp the worst clean z is 16.84.
+Z_THRESHOLD = 17.0
+MIN_ABS_DROP_PP = 0.15
+# Non-binding at pipeline volume (~2000 txn/min); the z/pp gates above already reach
+# zero.  Retained as the low-volume floor and flagged for revisit in docs/T1-RESULTS.md.
 MIN_ATTEMPTS = 50
 
 # Deterministic incident lifecycle.  These are intentionally independent of the

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from typing import Protocol
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -59,3 +61,59 @@ class WebhookPoster:
         if root_message_id:
             payload["thread_ts"] = root_message_id
         self._post(payload)
+
+
+@dataclass
+class SlackAppPoster:
+    """`chat.postMessage` transport with real threading (D29/D45).
+
+    Needs a bot token with `chat:write` and the bot invited to the channel.
+    `post_root` returns the message `ts`; `post_thread` passes it back as
+    `thread_ts`, so the agent's diagnosis lands under the deterministic root
+    alert instead of as a sibling message.
+    """
+    bot_token: str
+    channel: str
+    timeout_seconds: float = 5.0
+    api_url: str = "https://slack.com/api/chat.postMessage"
+
+    @classmethod
+    def from_env(cls) -> "SlackAppPoster | None":
+        token, channel = os.environ.get("SLACK_BOT_TOKEN"), os.environ.get("SLACK_CHANNEL")
+        return cls(token, channel) if token and channel else None
+
+    def _post(self, payload: dict) -> dict:
+        request = Request(
+            self.api_url, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json; charset=utf-8",
+                     "Authorization": f"Bearer {self.bot_token}"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                body = json.loads(response.read().decode())
+        except HTTPError as error:  # 429 / 5xx — never let transport break the loop
+            raise RuntimeError(f"Slack chat.postMessage HTTP {error.code}") from error
+        if not body.get("ok"):
+            raise RuntimeError(f"Slack chat.postMessage error: {body.get('error', 'unknown')}")
+        return body
+
+    def post_root(self, text: str) -> str | None:
+        return self._post({"channel": self.channel, "text": text}).get("ts")
+
+    def post_thread(self, root_message_id: str | None, text: str) -> None:
+        payload = {"channel": self.channel, "text": text}
+        if root_message_id:
+            payload["thread_ts"] = root_message_id
+        self._post(payload)
+
+
+def poster_from_env() -> AlertPoster:
+    """Pick the alert transport: Slack app (threaded) > webhook > console."""
+    app = SlackAppPoster.from_env()
+    if app is not None:
+        return app
+    webhook = os.environ.get("SLACK_WEBHOOK_URL")
+    if webhook:
+        return WebhookPoster(webhook)
+    return ConsolePoster()
