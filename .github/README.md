@@ -1,3 +1,4 @@
+<img width="1280" height="400" alt="savvy-readme-light" src="https://github.com/user-attachments/assets/bfbcd1e5-ceae-480d-95eb-da4ca5825870" />
 # Savvy — Payment Conversion Control Tower
 
 > **Savvy detects a meaningful payment-conversion drop, explains the affected route and evidence, and prioritizes the next investigation before revenue loss goes unnoticed.**
