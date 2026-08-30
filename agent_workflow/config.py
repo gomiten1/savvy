@@ -84,6 +84,10 @@ RETRY_RECOVERY_RATE = 0.0
 # from an investigation that keeps exploring while alerts continue to arrive.
 AGENT_BUDGET_SECONDS = 120
 AGENT_MAX_TOOL_CALLS = 15
+# Of those calls, at most this many may be free-form `run_sql` queries.  The playbook
+# tells the model to spend its first ~9 on the structured tools and keep these six for
+# what those tools cannot express (time series, arbitrary group-bys, retry chains).
+AGENT_FREE_QUERY_LIMIT = 6
 # The playbook is a guide, not a procedure (D4), so diagnosis quality tracks judgement.
 # Mini tier keeps the spend flat; effort is pinned low because AGENT_MAX_TOOL_CALLS
 # sequential turns have to finish inside AGENT_BUDGET_SECONDS (D80).

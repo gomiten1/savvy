@@ -40,6 +40,7 @@ from pipeline.domain.weights import (
     MAX_ATTEMPTS_PER_TRANSACTION,
     AMOUNT_RANGE_BY_COUNTRY,
 )
+from pipeline.domain.decline_mapping import CANONICAL_CODES
 from pipeline.domain.seasonality import volume_multiplier
 from pipeline.generator.sampling import enumerate_rate_cells, weighted_choice, poisson_sample
 from pipeline.generator.vendor_shapes import CanonicalEvent, build_vendor_event, pick_issuer_id
@@ -160,6 +161,7 @@ class LiveStreamGenerator:
         self.sim_now = sim_start or default_sim_start(_read_history_end(GOLD_DIR))
         self.events_emitted = 0
         self._trigger_file_consumed = False
+        self._writer_ready_logged = False
         # DATA-CONTRACT.md: "el injector must NOT tell us qué inyectó" — el
         # operador puede prender esto para su propio debugging, pero por
         # default no se imprime nada que revele el incidente (ni acá ni en
@@ -177,13 +179,17 @@ class LiveStreamGenerator:
             return
         try:
             payload = json.loads(TRIGGER_FILE.read_text(encoding="utf-8"))
+            decline_code = payload.get("dominant_decline_code")
+            if decline_code is not None and decline_code not in CANONICAL_CODES:
+                print(f"[generator] ignored trigger with unsupported dominant_decline_code={decline_code!r}")
+                return
             incident = Incident(
                 name=payload["name"],
                 start=self.sim_now,
                 duration_minutes=payload.get("duration_minutes", 60),
                 approval_rate_multiplier=payload.get("approval_rate_multiplier", 0.3),
                 cell_filter=payload.get("cell_filter", {}),
-                dominant_decline_code=payload.get("dominant_decline_code"),
+                dominant_decline_code=decline_code,
             )
             self.trigger_incident(incident)
             if self.reveal_injections:
@@ -325,6 +331,11 @@ class LiveStreamGenerator:
             if self.gold_writer is not None:
                 rows = normalize_batch(bronze_records, self._deduper, self._quarantine)
                 self.gold_writer.write_live_batch(rows)
+                from scripts.runtime_status import update_status
+                update_status(generator_last_write=time.time())
+                if not self._writer_ready_logged:
+                    print(f"[generator] live database writable, first event at {self.sim_now.isoformat()}")
+                    self._writer_ready_logged = True
         return len(records)
 
     def run(self, duration_real_seconds=None, tick_interval=0.2, verbose=True):

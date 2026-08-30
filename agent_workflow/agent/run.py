@@ -13,8 +13,8 @@ from typing import Any
 from agent_workflow.agent.schema import Diagnosis, insufficient_evidence, parse_diagnosis
 from agent_workflow.agent.catalogue import Catalogue
 from agent_workflow.agent.tools import DiagnosisTools, TOOL_SCHEMAS
-from agent_workflow.config import (AGENT_BUDGET_SECONDS, AGENT_MAX_TOOL_CALLS, AGENT_MODEL,
-                                   AGENT_REASONING_EFFORT)
+from agent_workflow.config import (AGENT_BUDGET_SECONDS, AGENT_FREE_QUERY_LIMIT, AGENT_MAX_TOOL_CALLS,
+                                   AGENT_MODEL, AGENT_REASONING_EFFORT)
 
 
 def _playbook() -> str:
@@ -57,12 +57,19 @@ class DiagnosisRunner:
 
     def __init__(self, tools: DiagnosisTools, *, client: Any | None = None, model: str = AGENT_MODEL,
                  budget_seconds: int = AGENT_BUDGET_SECONDS, max_tool_calls: int = AGENT_MAX_TOOL_CALLS,
-                 catalogue: Catalogue | None = None, reasoning_effort: str | None = AGENT_REASONING_EFFORT) -> None:
+                 catalogue: Catalogue | None = None, reasoning_effort: str | None = AGENT_REASONING_EFFORT,
+                 free_query_limit: int = AGENT_FREE_QUERY_LIMIT) -> None:
         self.tools, self.client, self.model = tools, client, model
         self.budget_seconds, self.max_tool_calls = budget_seconds, max_tool_calls
+        self.free_query_limit = free_query_limit
         self.catalogue = catalogue or Catalogue.load()
         # Only the gpt-5 family accepts `reasoning`; sending it to a 4.x model is an error.
         self._reasoning = {"reasoning": {"effort": reasoning_effort}} if reasoning_effort and model.startswith("gpt-5") else {}
+
+    def _inconclusive(self, reason: str, incident, *, detail: str = "") -> Diagnosis:
+        """An inconclusive result still carries the monitor-only next step, so the
+        channel always shows a *Recommended action* and *Next step* line."""
+        return self._validated_action(insufficient_evidence(reason, detail=detail), incident)
 
     def _validated_action(self, diagnosis: Diagnosis, incident) -> Diagnosis:
         allowed, reason = self.catalogue.validate_action(diagnosis.action_id, diagnosis.action_parameters, incident)
@@ -79,14 +86,14 @@ class DiagnosisRunner:
     def investigate(self, incident) -> Diagnosis:
         if self.client is None:
             if not os.environ.get("OPENAI_API_KEY"):
-                return insufficient_evidence("llm_unavailable", detail="Diagnosis worker is not configured; deterministic incident facts remain available.")
+                return self._inconclusive("llm_unavailable", incident, detail="Diagnosis worker is not configured; deterministic incident facts remain available.")
             try:
                 from openai import OpenAI
                 self.client = OpenAI()
             except ImportError:
-                return insufficient_evidence("llm_unavailable", detail="OpenAI SDK is not installed; deterministic incident facts remain available.")
+                return self._inconclusive("llm_unavailable", incident, detail="OpenAI SDK is not installed; deterministic incident facts remain available.")
 
-        started, calls = time.monotonic(), 0
+        started, calls, sql_calls = time.monotonic(), 0, 0
         # The transcript is carried client-side rather than with `previous_response_id`:
         # that parameter resolves a *stored* response, and we send `store=False`, so
         # chaining on it 400s on the second turn and every tool-using investigation dies.
@@ -106,9 +113,16 @@ class DiagnosisRunner:
                                  for item in response.output]
                 for call in function_calls:
                     if calls >= self.max_tool_calls or time.monotonic() - started >= self.budget_seconds:
-                        return insufficient_evidence("budget_exhausted", detail="Investigation is inconclusive; the available checks did not isolate one specific cause.")
+                        return self._inconclusive("budget_exhausted", incident, detail="Investigation is inconclusive; the available checks did not isolate one specific cause.")
                     arguments = json.loads(call.arguments)
-                    result = self.tools.call(call.name, arguments)
+                    if call.name == "run_sql":
+                        sql_calls += 1
+                        result = ({"error": f"free-query limit ({self.free_query_limit}) reached; "
+                                   "conclude with the evidence you have"}
+                                  if sql_calls > self.free_query_limit
+                                  else self.tools.call(call.name, arguments))
+                    else:
+                        result = self.tools.call(call.name, arguments)
                     conversation.append({"type": "function_call_output", "call_id": call.call_id,
                                          "output": json.dumps(result, default=str)})
                     calls += 1
@@ -116,4 +130,4 @@ class DiagnosisRunner:
             # Do not let a provider/network failure affect lifecycle or root alerts -- but say
             # so on the console, because swallowing it silently hid exactly this bug.
             print(f"[agent] investigation failed: {type(error).__name__}: {error}", file=sys.stderr)
-            return insufficient_evidence(f"llm_unavailable: {type(error).__name__}", detail="Investigation could not complete yet; deterministic incident facts remain available.")
+            return self._inconclusive(f"llm_unavailable: {type(error).__name__}", incident, detail="Investigation could not complete yet; deterministic incident facts remain available.")

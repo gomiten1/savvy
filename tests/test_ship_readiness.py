@@ -116,5 +116,38 @@ class ShipReadinessTests(unittest.TestCase):
         self.assertAlmostEqual(1_920.0, burn_rate_usd_hour(signal({"provider": "P1"})))
 
 
+class FreeQueryTests(unittest.TestCase):
+    def _tools(self, *, gold_dir=None):
+        store = MockStore(attempts("P1", 14))
+        if gold_dir is not None:
+            store._gold_dir = gold_dir
+        return DiagnosisTools(store, baseline_lookup(({"provider": "P1"}, .9, .01)))
+
+    def test_run_sql_unavailable_without_gold_store(self) -> None:
+        result = self._tools().run_sql("history", "SELECT 1")
+        self.assertIn("unavailable", result["error"])
+
+    def test_run_sql_rejects_non_read_statements(self) -> None:
+        tools = self._tools(gold_dir="/nonexistent")
+        self.assertIn("single read-only", tools.run_sql("live", "DELETE FROM live_attempts")["error"])
+        self.assertIn("single read-only", tools.run_sql("live", "SELECT 1; DROP TABLE live_attempts")["error"])
+        self.assertIn("non-read keyword", tools.run_sql("live", "SELECT * FROM sqlite_master")["error"])
+        self.assertEqual("database must be 'history' or 'live'", tools.run_sql("prod", "SELECT 1")["error"])
+
+    def test_runner_caps_free_queries(self) -> None:
+        calls = [SimpleNamespace(id=f"r{i}", output=[function_call("run_sql", {"database": "live", "sql": "SELECT 1"})],
+                                 output_text="") for i in range(3)]
+        calls.append(final_response({
+            "root_cause": "x", "confidence": "insufficient_evidence", "evidence": [],
+            "ops_explanation": "x", "exec_one_liner": "x",
+        }))
+        client = FakeClient(calls)
+        runner = DiagnosisRunner(self._tools(), client=client, free_query_limit=2)
+        runner.investigate(incident_for())
+        outputs = [item["output"] for kwargs in client.responses.calls
+                   for item in kwargs["input"] if isinstance(item, dict) and item.get("type") == "function_call_output"]
+        self.assertTrue(any("free-query limit (2) reached" in text for text in outputs))
+
+
 if __name__ == "__main__":
     unittest.main()

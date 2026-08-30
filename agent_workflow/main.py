@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import queue
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -33,6 +35,7 @@ class Workflow:
         self._artifact_signature = self._pointer_signature()
         self._last_recompute_day = None
         self.poster = poster_from_env()
+        print(f"[slack] transport={type(self.poster).__name__}")
         self.memory = IncidentRepository(f"{data_dir}/incidents.db")
         self.publisher = ReportPublisher(f"{data_dir}/reports.db")
         self.jobs: queue.Queue = queue.Queue()
@@ -95,15 +98,30 @@ class Workflow:
 
     def _run_worker(self) -> None:
         while (incident := self.jobs.get()) is not None:
-            diagnosis = self.runner.investigate(incident)
-            self._diagnoses[incident.incident_id] = diagnosis
-            if incident.root_message_id not in (None, "suppressed"):
-                self.poster.post_thread(incident.root_message_id, format_diagnosis(incident, diagnosis))
-            # Use simulated detector time so D66's cooldown is meaningful during
-            # accelerated local replays.
-            self.registry.mark_diagnosed(incident, incident.last_evaluated_at or incident.opened_at)
-            # Reporting is explicitly after the user-facing thread reply.
-            self.publisher.publish(incident, diagnosis)
+            # One failing incident must never kill the worker: every later incident
+            # would then get a root alert and no diagnosis for the life of the process.
+            try:
+                self._diagnose(incident)
+            except Exception as error:
+                print(f"[worker] {incident.incident_id} diagnosis failed: "
+                      f"{type(error).__name__}: {error}", file=sys.stderr)
+
+    def _diagnose(self, incident) -> None:
+        diagnosis = self.runner.investigate(incident)
+        self._diagnoses[incident.incident_id] = diagnosis
+        if incident.root_message_id != "suppressed":
+            text = format_diagnosis(incident, diagnosis)
+            if incident.root_message_id:
+                self.poster.post_thread(incident.root_message_id, text)
+            else:
+                # No threadable parent (webhook/console transport, or a failed root
+                # post). Still deliver the diagnosis instead of silently dropping it.
+                self.poster.post_root(text)
+        # Use simulated detector time so D66's cooldown is meaningful during
+        # accelerated local replays.
+        self.registry.mark_diagnosed(incident, incident.last_evaluated_at or incident.opened_at)
+        # Reporting is explicitly after the user-facing thread reply.
+        self.publisher.publish(incident, diagnosis)
 
     def _publish_resolution(self, incident) -> None:
         diagnosis = self._diagnoses.get(incident.incident_id)
@@ -144,6 +162,7 @@ def run_live(args) -> None:
     clean history by T1 before the live stream started.  This never rebuilds them.
     """
     from agent_workflow.store.gold import GoldStore
+    from scripts.runtime_status import update_status
 
     store = GoldStore()
     workflow = Workflow(store, BaselineLookup.from_data_dir(args.data_dir), data_dir=args.data_dir,
@@ -152,6 +171,7 @@ def run_live(args) -> None:
     poll = max(0.2, args.poll_seconds)
     deadline = None if not args.duration else time.time() + args.duration
     tick = None
+    first_successful_scan = True
     try:
         print(f"[live] waiting for live_attempts; history_end={store.history_end.isoformat()}")
         while deadline is None or time.time() < deadline:
@@ -170,6 +190,10 @@ def run_live(args) -> None:
                 workflow.maybe_schedule_recompute(tick)
                 signals = scan(store, workflow.registry.baselines, tick, gates=workflow.gates)
                 workflow.registry.tick(cluster(signals), tick)
+                update_status(detector_last_scan=time.time())
+                if first_successful_scan:
+                    print(f"[detector] first successful scan at {tick.isoformat()}")
+                    first_successful_scan = False
                 print(f"{tick.isoformat()} · MAX(event_ts)={latest.isoformat()} · {len(signals)} signals · "
                       f"{len(workflow.registry.open_incidents())} open incidents")
                 advanced = True
@@ -181,7 +205,23 @@ def run_live(args) -> None:
         workflow.stop()
 
 
+def _load_dotenv(path: str = ".env") -> None:
+    """Populate env from a local .env so a bare `python -m agent_workflow.main`
+    picks up OPENAI_API_KEY / SLACK_* without a systemd EnvironmentFile.
+    Real environment variables always win (setdefault)."""
+    file = Path(path)
+    if not file.exists():
+        return
+    for line in file.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
 def main() -> None:
+    _load_dotenv()
     parser = argparse.ArgumentParser(description="Run the local PagoTotal monitor.")
     parser.add_argument("--live", action="store_true",
                         help="drive ticks off live_attempts MAX(event_ts) via GoldStore (D74)")

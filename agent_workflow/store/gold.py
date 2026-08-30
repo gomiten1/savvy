@@ -14,6 +14,7 @@ reports ``approved = 0`` and any conversion rate off it is structurally wrong.
 from __future__ import annotations
 
 import sqlite3
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +77,7 @@ def _read_with_retry(fn, *, attempts: int = 6, base_delay: float = 0.05):
         except sqlite3.OperationalError as error:
             if "locked" not in str(error).lower() or index == attempts - 1:
                 raise
+            print(f"[detector] SQLite busy; retrying read ({index + 1}/{attempts})", file=sys.stderr)
             time.sleep(base_delay * (index + 1))
 
 
