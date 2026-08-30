@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Artefactos generados por el pipeline (regenerar con
+# `python -m pipeline.generator.generate_historical_aggregates`, ~35s).
+# No se versionan: los parquet/duckdb del Gold layer pesan cientos de MB y
+# no aportan nada revisando el repo -- el código para reproducirlos sí
+# está versionado.
+data/
