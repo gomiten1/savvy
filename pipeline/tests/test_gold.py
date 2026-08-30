@@ -291,6 +291,12 @@ class GoldWriterTest(unittest.TestCase):
         writer.close()
         self.assertTrue(nested.exists())
 
+    def test_live_writer_uses_wal_for_concurrent_detector_reads(self):
+        writer = GoldWriter(db_path=self.db_path)
+        self.assertEqual("wal", writer.conn.execute("PRAGMA journal_mode").fetchone()[0].lower())
+        self.assertEqual(5000, writer.conn.execute("PRAGMA busy_timeout").fetchone()[0])
+        writer.close()
+
 
 if __name__ == "__main__":
     unittest.main()

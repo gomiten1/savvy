@@ -223,8 +223,9 @@ def get_counts(start_ts: str, end_ts: str, bucket: str = "minute", group_by=(), 
 
     if live_path.exists() and (history_end is None or end_ts > history_end):
         live_start = max(start_ts, history_end) if history_end else start_ts
-        live_conn = sqlite3.connect(str(live_path))
+        live_conn = sqlite3.connect(f"file:{live_path}?mode=ro", uri=True, timeout=5.0)
         try:
+            live_conn.execute("PRAGMA busy_timeout=5000")
             rows += _query_live_counts(live_conn, live_start, end_ts, bucket, group_by, filters)
         finally:
             live_conn.close()
@@ -244,9 +245,10 @@ def get_samples(start_ts: str, end_ts: str, filters: dict = None, limit: int = 5
     if not live_path.exists():
         return []
 
-    conn = sqlite3.connect(str(live_path))
+    conn = sqlite3.connect(f"file:{live_path}?mode=ro", uri=True, timeout=5.0)
     conn.row_factory = sqlite3.Row
     try:
+        conn.execute("PRAGMA busy_timeout=5000")
         where_sql, params = _where("event_ts", start_ts, end_ts, filters)
         sql = f"""
             SELECT attempt_id, payment_id, attempt_number, event_ts, merchant_id,

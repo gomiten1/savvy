@@ -136,7 +136,14 @@ class GoldWriter:
     def __init__(self, db_path=None, conn: sqlite3.Connection = None):
         if conn is None and db_path is not None:
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.conn = conn or sqlite3.connect(db_path)
+        # The detector reads this file from a separate process while Generator B
+        # commits batches. WAL permits that one-writer/many-reader pattern without
+        # blocking readers for each commit; the timeout covers the brief setup and
+        # checkpoint windows that still require a lock.
+        self.conn = conn or sqlite3.connect(db_path, timeout=5.0)
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self.conn.execute("PRAGMA busy_timeout=5000")
         create_live_tables(self.conn)
 
     def write_live_batch(self, silver_rows: list):
