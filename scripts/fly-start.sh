@@ -20,19 +20,19 @@ status_file=/data/runtime-status.json
 export RUNTIME_STATUS_FILE="$status_file"
 python -c 'from scripts.runtime_status import update_status; update_status(state="booting", generator_last_write=None, detector_last_scan=None)'
 
-health_pid=""
+web_pid=""
 generator_pid=""
 detector_pid=""
 cleanup() {
-  for pid in "$health_pid" "$generator_pid" "$detector_pid"; do
+  for pid in "$web_pid" "$generator_pid" "$detector_pid"; do
     [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
   done
   wait 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 
-python scripts/health_server.py --status-file "$status_file" &
-health_pid=$!
+python scripts/web_server.py --status-file "$status_file" &
+web_pid=$!
 
 # A fresh volume needs the historical artifact before the live writer starts.
 if [[ ! -f /data/gold/historical.duckdb || ! -f /data/baselines_current ]]; then

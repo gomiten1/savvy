@@ -259,6 +259,23 @@ dl { margin: 0; }
     text-decoration: none;
 }
 
+.injection-section {
+    margin-top: var(--space-7);
+    padding: var(--space-5);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+}
+
+.injection-section__heading { margin-bottom: var(--space-5); }
+.injection-form { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); }
+.injection-field { display: grid; gap: var(--space-2); min-width: 0; }
+.injection-field select { width: 100%; min-height: 42px; padding: 0 var(--space-2); border: 1px solid var(--line-strong); border-radius: var(--radius-sm); background: var(--surface); }
+.injection-actions { display: flex; grid-column: 1 / -1; align-items: center; gap: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--line); }
+.injection-status { color: var(--muted); font-size: 14px; }
+.injection-status--success { color: var(--success); font-weight: 700; }
+.injection-status--error { color: var(--critical); font-weight: 700; }
+
 .icon-button {
     width: 40px;
     padding: 0;

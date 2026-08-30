@@ -13,6 +13,7 @@
     <script src="dashboard-data.js" defer></script>
     <script src="dashboard-utils.js" defer></script>
     <script src="dashboard-index.js" defer></script>
+    <script src="dashboard-injection.js" defer></script>
 </head>
 <body>
     <a class="skip-link" href="#main-content">Skip to incident dashboard</a>
@@ -110,6 +111,26 @@
                 </div>
 
                 <div id="incidentList" class="incident-list"></div>
+            </section>
+
+            <section class="injection-section" aria-labelledby="injection-title">
+                <div class="injection-section__heading">
+                    <div>
+                        <p class="eyebrow">Demo controls</p>
+                        <h2 id="injection-title">Inject a conversion-rate drop</h2>
+                        <p class="panel-description">Queues one synthetic incident for the live generator. It will appear here after detection and diagnosis finish.</p>
+                    </div>
+                </div>
+                <form id="injectionForm" class="injection-form">
+                    <label class="injection-field" for="injectionProvider"><span class="field-label">Provider</span><select id="injectionProvider" name="provider" required><option value="stripe">Stripe</option><option value="adyen">Adyen</option><option value="mercadopago">Mercado Pago</option><option value="dlocal">dLocal</option></select></label>
+                    <label class="injection-field" for="injectionCountry"><span class="field-label">Country</span><select id="injectionCountry" name="country" required><option value="MX">Mexico</option><option value="BR">Brazil</option><option value="CO">Colombia</option></select></label>
+                    <label class="injection-field" for="injectionMethod"><span class="field-label">Payment method</span><select id="injectionMethod" name="payment_method" required></select></label>
+                    <label class="injection-field" for="injectionBank"><span class="field-label">Issuing bank</span><select id="injectionBank" name="issuing_bank"><option value="">All banks</option></select></label>
+                    <label class="injection-field" for="injectionMultiplier"><span class="field-label">Approval rate remaining</span><select id="injectionMultiplier" name="approval_rate_multiplier"><option value="0.15">15% · severe drop</option><option value="0.3" selected>30% · major drop</option><option value="0.5">50% · moderate drop</option><option value="0.7">70% · light drop</option></select></label>
+                    <label class="injection-field" for="injectionDuration"><span class="field-label">Duration</span><select id="injectionDuration" name="duration_minutes"><option value="30">30 simulated minutes</option><option value="60" selected>60 simulated minutes</option><option value="120">120 simulated minutes</option><option value="240">240 simulated minutes</option></select></label>
+                    <label class="injection-field" for="injectionDecline"><span class="field-label">Dominant decline</span><select id="injectionDecline" name="dominant_decline_code"><option value="">Natural mix</option><option value="91_96_network_timeout">Network timeout</option><option value="05_do_not_honor">Do not honor</option><option value="capture_error">Capture error</option></select></label>
+                    <div class="injection-actions"><button id="injectionSubmit" class="button button--primary" type="submit">Inject incident</button><p id="injectionStatus" class="injection-status" role="status" aria-live="polite"></p></div>
+                </form>
             </section>
         </div>
     </main>

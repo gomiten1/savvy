@@ -102,6 +102,7 @@ const index = read('index.html');
 const detail = read('incident-detail.html');
 const indexScript = read('dashboard-index.js');
 const detailScript = read('dashboard-detail.js');
+const injectionScript = read('dashboard-injection.js');
 const css = read('dashboard.css');
 
 ['dashboard-data.js', 'dashboard-utils.js', 'dashboard.css'].forEach((asset) => {
@@ -119,6 +120,9 @@ const css = read('dashboard.css');
 ].forEach((label) => check(detailScript.includes(label), `Detail renderer does not expose the ${label} field or section`));
 
 check(index.indexOf('id="summaryGrid"') < index.indexOf('id="incident-log"'), 'Dashboard layout must show aggregate summaries before the incident log');
+check(index.indexOf('id="incident-log"') < index.indexOf('injectionForm'), 'Judge injection controls must appear after the incident log');
+check(index.includes('dashboard-injection.js') && injectionScript.includes("/api/injections"), 'Dashboard must submit judge injections to the same-origin API');
+check(indexScript.includes('void loadAndRenderPage(); }, 10000'), 'Dashboard must refresh published reports after a judge injection');
 check(indexScript.includes('formatMoney(report.burn_rate_usd_hour)'), 'Incident list rows must use the shared money formatter');
 check(indexScript.includes("sum(openReports, 'burn_rate_usd_hour')"), 'Summary must aggregate the current open incident reports directly');
 check(detailScript.includes('data.getSeverity(report)') && indexScript.includes('data.getSeverity(report)'), 'Both views must derive severity from the shared confidence-capped rule');

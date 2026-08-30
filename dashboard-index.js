@@ -312,6 +312,9 @@
         });
         document.getElementById('resetFilters').addEventListener('click', resetFilters);
         window.setTimeout(() => { void loadAndRenderPage(); }, 180);
+        // New reports are exported after diagnosis; refresh the feed without
+        // asking a judge to reload after they trigger a live incident.
+        window.setInterval(() => { void loadAndRenderPage(); }, 10000);
         window.setInterval(() => updateRelativeTimes(document), 60000);
     });
 }());

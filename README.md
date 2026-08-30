@@ -7,7 +7,7 @@ Savvy is a static dashboard for monitoring payment-conversion incidents. It show
 No build step is required.
 
 ```bash
-python -m http.server 8000
+python scripts/web_server.py --port 8000
 ```
 
 Open `http://localhost:8000` in a modern browser.
@@ -19,6 +19,10 @@ after every publish, atomically exports `data/dashboard-reports.json` for the
 browser. The dashboard fetches that feed and keeps all revisions for the detail
 and audit views. If no workflow has produced a feed yet, it shows the built-in
 demo data instead.
+
+The bottom **Inject a conversion-rate drop** panel is intentionally unauthenticated
+for this short-lived judging demo. It queues one validated trigger for the live
+generator; the browser never writes to SQLite directly.
 
 Run the workflow and static dashboard together:
 
