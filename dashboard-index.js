@@ -275,6 +275,16 @@
         updateRelativeTimes(app);
     }
 
+    async function loadAndRenderPage() {
+        const feed = await data.loadReports();
+        if (feed.error) {
+            const loading = document.getElementById('loadingState');
+            loading.innerHTML = `<div class="error-state" role="alert"><div class="error-state__mark" aria-hidden="true">!</div><h1>Reporting feed unavailable</h1><p>${escapeHTML(feed.error)}</p></div>`;
+            return;
+        }
+        renderPage();
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         document.querySelectorAll('[data-status-filter]').forEach((button) => {
             button.addEventListener('click', () => {
@@ -301,7 +311,7 @@
             renderIncidentList();
         });
         document.getElementById('resetFilters').addEventListener('click', resetFilters);
-        window.setTimeout(renderPage, 180);
+        window.setTimeout(() => { void loadAndRenderPage(); }, 180);
         window.setInterval(() => updateRelativeTimes(document), 60000);
     });
 }());

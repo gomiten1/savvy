@@ -18,7 +18,7 @@
         'recommended_action', 'alternatives_ruled_out'
     ];
 
-    const reports = [
+    const seedReports = [
         {
             incident_id: 'INC-2026-08-001',
             revision: 1,
@@ -292,6 +292,58 @@
         }
     ];
 
+    let reports = seedReports;
+
+    const DEFAULT_FEED_URL = 'data/dashboard-reports.json';
+    const feedState = {
+        source: 'seed',
+        error: null,
+        url: DEFAULT_FEED_URL
+    };
+
+    function setReports(nextReports) {
+        if (!Array.isArray(nextReports)) throw new TypeError('The reporting feed must contain a reports array.');
+        reports = nextReports;
+        return reports;
+    }
+
+    function getFeedState() {
+        return { ...feedState };
+    }
+
+    async function loadReports({ url = DEFAULT_FEED_URL, fetchImpl = global.fetch } = {}) {
+        if (typeof fetchImpl !== 'function') return getFeedState();
+
+        try {
+            const response = await fetchImpl(url, { cache: 'no-store' });
+            // A static dashboard remains demoable before the workflow has
+            // produced its first report. Any other failure must be visible
+            // instead of silently presenting stale demo data as live data.
+            if (response.status === 404) {
+                setReports(seedReports);
+                feedState.source = 'seed';
+                feedState.error = null;
+                feedState.url = url;
+                return getFeedState();
+            }
+            if (!response.ok) throw new Error(`Reporting feed returned HTTP ${response.status}.`);
+
+            const payload = await response.json();
+            const nextReports = Array.isArray(payload) ? payload : payload && payload.reports;
+            if (!Array.isArray(nextReports)) throw new Error('Reporting feed is missing its reports array.');
+
+            setReports(nextReports);
+            feedState.source = 'published';
+            feedState.error = null;
+            feedState.url = url;
+        } catch (error) {
+            feedState.source = 'error';
+            feedState.error = error instanceof Error ? error.message : 'Reporting feed could not be loaded.';
+            feedState.url = url;
+        }
+        return getFeedState();
+    }
+
     const confidenceCaps = {
         high: 100,
         medium: 74,
@@ -347,10 +399,6 @@
         return typeof value === 'string' && value.trim().length > 0;
     }
 
-    function hasCentPrecision(value) {
-        return Number.isFinite(value) && Math.abs((value * 100) - Math.round(value * 100)) < 0.000001;
-    }
-
     function anchorCellsMatch(first, second) {
         if (!first || !second || typeof first !== 'object' || typeof second !== 'object') return false;
         const firstKeys = Object.keys(first).sort();
@@ -387,19 +435,16 @@
             });
             if (report.baseline_rate < 0 || report.baseline_rate > 1 || report.observed_rate < 0 || report.observed_rate > 1 || report.blast_radius < 0 || report.blast_radius > 1) errors.push(`${revisionKey} has an out-of-range rate or blast radius`);
             if (report.drop_pp < 0 || report.burn_rate_usd_hour < 0 || report.cumulative_loss_usd < 0) errors.push(`${revisionKey} has a negative drop or money value`);
-            ['burn_rate_usd_hour', 'cumulative_loss_usd'].forEach((field) => {
-                if (!hasCentPrecision(report[field])) errors.push(`${revisionKey} ${field} is not cent-precise`);
-            });
-
-            const anchorIsValid = report.anchor_cell && typeof report.anchor_cell === 'object' && !Array.isArray(report.anchor_cell) && Object.keys(report.anchor_cell).length > 0 && Object.entries(report.anchor_cell).every(([dimension, value]) => isNonEmptyString(dimension) && isNonEmptyString(value));
+            const isDimensionValue = (value) => value === null || isNonEmptyString(value);
+            const anchorIsValid = report.anchor_cell && typeof report.anchor_cell === 'object' && !Array.isArray(report.anchor_cell) && Object.keys(report.anchor_cell).length > 0 && Object.entries(report.anchor_cell).every(([dimension, value]) => isNonEmptyString(dimension) && isDimensionValue(value));
             if (!anchorIsValid) errors.push(`${revisionKey} has invalid anchor_cell`);
 
-            const affectedEntitiesAreValid = Array.isArray(report.affected_entities) && report.affected_entities.length > 0 && report.affected_entities.every((entity) => entity && typeof entity === 'object' && isNonEmptyString(entity.dimension) && isNonEmptyString(entity.value) && Number.isFinite(entity.share_of_impact) && entity.share_of_impact >= 0 && entity.share_of_impact <= 1);
+            const affectedEntitiesAreValid = Array.isArray(report.affected_entities) && report.affected_entities.length > 0 && report.affected_entities.every((entity) => entity && typeof entity === 'object' && isNonEmptyString(entity.dimension) && isDimensionValue(entity.value) && Number.isFinite(entity.share_of_impact) && entity.share_of_impact >= 0 && entity.share_of_impact <= 1);
             if (!affectedEntitiesAreValid) {
                 errors.push(`${revisionKey} has invalid affected_entities`);
             }
             if (affectedEntitiesAreValid && Math.abs(report.affected_entities.reduce((total, entity) => total + entity.share_of_impact, 0) - 1) > 0.0001) errors.push(`${revisionKey} affected-entity shares do not sum to 1`);
-            if (!Array.isArray(report.evidence) || report.evidence.length === 0 || report.evidence.some((item) => !item || typeof item !== 'object' || !isNonEmptyString(item.claim) || !isNonEmptyString(item.support))) errors.push(`${revisionKey} has invalid evidence`);
+            if (!Array.isArray(report.evidence) || report.evidence.some((item) => !item || typeof item !== 'object' || !isNonEmptyString(item.claim) || !isNonEmptyString(item.support))) errors.push(`${revisionKey} has invalid evidence`);
             if (!Array.isArray(report.alternatives_ruled_out) || report.alternatives_ruled_out.some((item) => !isNonEmptyString(item))) errors.push(`${revisionKey} has invalid alternatives_ruled_out`);
             if (typeof report.exec_one_liner !== 'string' || !/^\$[\d,]+(?:\.\d+)?\s/.test(report.exec_one_liner)) errors.push(`${revisionKey} exec_one_liner is not money-first`);
             if (!isNonEmptyString(report.ops_explanation)) errors.push(`${revisionKey} has invalid ops_explanation`);
@@ -433,17 +478,6 @@
         });
 
         const live = getLiveReports();
-        const hasOpenHigh = live.some((report) => report.status === 'open' && report.confidence === 'high' && report.burn_rate_usd_hour >= 5000);
-        const hasResolved = live.some((report) => report.status === 'resolved' && report.resolved_at && report.cumulative_loss_usd > 0);
-        const hasInsufficientEvidence = live.some((report) => report.confidence === 'insufficient_evidence' && !report.dominant_decline_code && Array.isArray(report.alternatives_ruled_out) && report.alternatives_ruled_out.length === 0);
-        const hasRepeat = live.some((report) => report.repeat_of_incident_id);
-        const hasMultipleRevisions = live.some((report) => getReportsForIncident(report.incident_id).length >= 2);
-        if (!hasOpenHigh) errors.push('Missing open, high-confidence, high-burn seed state');
-        if (!hasResolved) errors.push('Missing resolved seed state');
-        if (!hasInsufficientEvidence) errors.push('Missing insufficient-evidence seed state');
-        if (!hasRepeat) errors.push('Missing repeat incident seed state');
-        if (!hasMultipleRevisions) errors.push('Missing multi-revision seed state');
-
         live.filter((report) => report.repeat_of_incident_id).forEach((repeat) => {
             const original = live.find((report) => report.incident_id === repeat.repeat_of_incident_id);
             if (!original || !anchorCellsMatch(original.anchor_cell, repeat.anchor_cell)) errors.push(`${repeat.incident_id} is not a repeat of the referenced anchor cell`);
@@ -454,9 +488,12 @@
 
     const dashboardData = {
         INCIDENT_REPORT_FIELDS,
-        reports,
+        get reports() { return reports; },
         confidenceCaps,
         severityMeta,
+        setReports,
+        loadReports,
+        getFeedState,
         calculateRiskScore,
         getSeverity,
         getReportsForIncident,

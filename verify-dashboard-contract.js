@@ -91,7 +91,7 @@ mutableReport.affected_entities[0].share_of_impact = 'not-a-number';
 check(data.validateContract().some((error) => error.includes('invalid affected_entities')), 'Schema validation must reject a nonnumeric share_of_impact');
 mutableReport.affected_entities[0].share_of_impact = originalShare;
 mutableReport.burn_rate_usd_hour = 0.335;
-check(data.validateContract().some((error) => error.includes('burn_rate_usd_hour is not cent-precise')), 'Schema validation must reject money values with precision beyond cents');
+check(!data.validateContract().some((error) => error.includes('burn_rate_usd_hour is not cent-precise')), 'Runtime validation must retain deterministic money values without imposing presentation rounding');
 mutableReport.burn_rate_usd_hour = originalBurn;
 mutableReport.drop_pp = -1;
 check(data.validateContract().some((error) => error.includes('negative drop or money value')), 'Schema validation must reject a negative absolute drop');
@@ -144,10 +144,37 @@ check(detailScript.includes('Recommended action') && !detailScript.includes('Exe
     check(css.includes(token), `Shared UI system is missing ${token}`);
 });
 
-if (failures.length) {
-    console.error(`Dashboard contract verification failed (${failures.length}):`);
-    failures.forEach((failure) => console.error(`- ${failure}`));
-    process.exitCode = 1;
-} else {
-    console.log('PASS: dashboard contract, seed states, confidence caps, aggregation, and UI surface checks all passed.');
+async function verifyPublishedFeedLoading() {
+    const seedReports = data.reports;
+    const publishedReports = JSON.parse(JSON.stringify(seedReports.slice(0, 2)));
+    const published = await data.loadReports({
+        url: 'data/dashboard-reports.json',
+        fetchImpl: async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ schema_version: 2, reports: publishedReports })
+        })
+    });
+    check(published.source === 'published' && !published.error, 'Dashboard did not mark a published reporting feed as healthy');
+    check(data.reports === publishedReports, 'Dashboard did not replace seed data with the published reporting feed');
+
+    const fallback = await data.loadReports({
+        url: 'data/dashboard-reports.json',
+        fetchImpl: async () => ({ ok: false, status: 404 })
+    });
+    check(fallback.source === 'seed' && !fallback.error, 'Dashboard did not fall back to demo data when no published feed exists');
+    check(data.reports === seedReports, 'Dashboard did not restore seed data after a missing feed');
 }
+
+verifyPublishedFeedLoading().then(() => {
+    if (failures.length) {
+        console.error(`Dashboard contract verification failed (${failures.length}):`);
+        failures.forEach((failure) => console.error(`- ${failure}`));
+        process.exitCode = 1;
+    } else {
+        console.log('PASS: dashboard contract, published-feed loading, seed states, confidence caps, aggregation, and UI surface checks all passed.');
+    }
+}).catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+});

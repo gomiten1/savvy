@@ -98,7 +98,7 @@
 
     function formatAnchorCell(anchorCell) {
         return Object.entries(anchorCell || {})
-            .map(([dimension, value]) => `${humanize(dimension)} ${value}`)
+            .map(([dimension, value]) => `${humanize(dimension)} ${value ?? 'Unknown'}`)
             .join(' × ');
     }
 
@@ -150,7 +150,7 @@
     }
 
     function formatEntity(entity) {
-        return `${humanize(entity.dimension)} · ${entity.value}`;
+        return `${humanize(entity.dimension)} · ${entity.value ?? 'Unknown'}`;
     }
 
     global.SavvyDashboardUtils = {

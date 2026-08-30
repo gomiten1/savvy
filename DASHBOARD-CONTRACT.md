@@ -14,6 +14,16 @@ dashboard over history. Different access pattern, different consumer, different 
 tolerance — so it is a separate store.
 
 **Store:** `reports.db` (SQLite for MVP, swappable for Postgres later). Append-only.
+
+**Browser feed:** after every publish, `publish.py` atomically writes
+`data/dashboard-reports.json` from `reports.db`. It contains the full revision
+history in this envelope, with the JSON database columns decoded for the browser:
+
+```json
+{ "schema_version": 2, "generated_at": "…", "reports": [/* incident_reports rows */] }
+```
+
+The dashboard fetches this same-origin file; it never reads SQLite directly.
 **Join key:** `incident_id` — identical to the one in `incidents.db`.
 
 ## 2. The reporting process (brief)

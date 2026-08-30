@@ -78,6 +78,7 @@
     }
 
     function evidenceList(evidence) {
+        if (!evidence.length) return '<li class="empty-list">No supporting evidence has been published yet.</li>';
         return evidence.map((item) => `<li class="evidence-item"><p class="evidence-claim">${escapeHTML(item.claim)}</p><p class="evidence-support">${escapeHTML(item.support)}</p></li>`).join('');
     }
 
@@ -98,6 +99,7 @@
         const alternatives = report.alternatives_ruled_out.length
             ? `<ul class="plain-list">${report.alternatives_ruled_out.map((item) => `<li>${escapeHTML(item)}</li>`).join('')}</ul>`
             : '<div class="empty-list">None.</div>';
+        const recommendedAction = report.recommended_action || 'No recommended action has been published.';
 
         return `
             <a class="breadcrumb" href="index.html" aria-label="Back to incident log">← Back to incident log</a>
@@ -187,7 +189,7 @@
                         </div>
                         <div class="callout callout--recommendation">
                             <h3 class="callout-title">Recommended action</h3>
-                            <p class="callout-copy">${escapeHTML(report.recommended_action)}</p>
+                            <p class="callout-copy">${escapeHTML(recommendedAction)}</p>
                         </div>
                     </section>
                 </div>
@@ -261,9 +263,18 @@
         });
     }
 
-    function renderPage() {
+    async function renderPage() {
         const container = document.getElementById('detailApp');
         const loading = document.getElementById('loadingState');
+        const feed = await data.loadReports();
+        if (feed.error) {
+            setFeedStatus('Reporting feed unavailable', true);
+            loading.classList.add('is-hidden');
+            container.innerHTML = renderError(feed.error);
+            container.classList.remove('is-hidden');
+            container.removeAttribute('aria-busy');
+            return;
+        }
         const validationErrors = data.validateContract();
         const parameters = new URLSearchParams(window.location.search);
         const incidentId = parameters.get('id');
@@ -280,7 +291,7 @@
         }
 
         if (!incidentId) {
-            setFeedStatus('Reporting feed healthy');
+            setFeedStatus(feed.source === 'published' ? 'Reporting feed healthy' : 'Demo feed â€” no published reports yet');
             loading.classList.add('is-hidden');
             container.innerHTML = renderError('Choose an incident from the incident log to view its report.');
             container.classList.remove('is-hidden');
@@ -306,13 +317,16 @@
         container.innerHTML = report ? renderDetail(report, reports) : renderError(`No report was found for ${incidentId}${requestedRevision ? ` revision ${requestedRevision}` : ''}.`);
         container.classList.remove('is-hidden');
         container.removeAttribute('aria-busy');
-        setFeedStatus(report ? 'Reporting feed healthy' : 'Reporting feed needs attention', !report);
+        setFeedStatus(
+            report ? (feed.source === 'published' ? 'Reporting feed healthy' : 'Demo feed â€” no published reports yet') : 'Reporting feed needs attention',
+            !report
+        );
         updateRelativeTimes(container);
         bindCopyButton();
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        window.setTimeout(renderPage, 120);
+        window.setTimeout(() => { void renderPage(); }, 120);
         window.setInterval(() => updateRelativeTimes(document), 60000);
     });
 }());

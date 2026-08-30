@@ -12,6 +12,21 @@ python -m http.server 8000
 
 Open `http://localhost:8000` in a modern browser.
 
+## Live reporting feed
+
+`ReportPublisher` keeps `data/reports.db` as the reporting source of truth and,
+after every publish, atomically exports `data/dashboard-reports.json` for the
+browser. The dashboard fetches that feed and keeps all revisions for the detail
+and audit views. If no workflow has produced a feed yet, it shows the built-in
+demo data instead.
+
+Run the workflow and static dashboard together:
+
+```bash
+python -m agent_workflow.main --input data/synthetic_backfill.csv --data-dir data
+python -m http.server 8000
+```
+
 ## Verify the dashboard
 
 ```bash
