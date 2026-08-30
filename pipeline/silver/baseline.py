@@ -30,7 +30,7 @@ from statistics import mean, pstdev
 
 import duckdb
 
-from pipeline.generator.weights import (
+from pipeline.domain.weights import (
     MIN_DAYS_FOR_DAILY_PATTERN,
     MIN_DAYS_FOR_WEEKLY_PATTERN,
     DAYS_UNTIL_BAND_IS_TIGHT,
@@ -40,6 +40,7 @@ from pipeline.generator.weights import (
     APPROVAL_RATE,
 )
 from pipeline.gold.schema import HISTORICAL_DB_FILENAME
+from pipeline.gold.queries import fetch_rate_cells_pooled_by_minute
 
 DB_PATH = Path(__file__).resolve().parents[2] / "data" / "gold" / HISTORICAL_DB_FILENAME
 
@@ -100,13 +101,8 @@ class BaselineStore:
         # el baseline de conversion rate se poolea across merchants acá
         # mismo en SQL (merchant no es dimensión del baseline, ver
         # decision_log.md), sumando attempts/approved por (cell_id, minuto).
-        query = """
-            SELECT time_bucket, minute_of_day, cell_id,
-                   SUM(attempts) AS attempts, SUM(approved) AS approved
-            FROM rate_cells_minutely
-            GROUP BY cell_id, time_bucket, minute_of_day
-        """
-        for time_bucket, minute_of_day, cell_id, attempts, approved in conn.execute(query).fetchall():
+        # SQL compartida con pipeline/gold/queries.py -- ver ese módulo.
+        for time_bucket, minute_of_day, cell_id, attempts, approved in fetch_rate_cells_pooled_by_minute(conn):
             day = time_bucket[:10]
             key = (cell_id, minute_of_day)
             rate = approved / attempts if attempts else 0.0

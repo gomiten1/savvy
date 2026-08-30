@@ -14,11 +14,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 
-from pipeline.silver.decline_mapping import pick_vendor_code
-from pipeline.silver.bin_lookup import issuers_for_country
+from pipeline.domain.decline_mapping import pick_vendor_code
+from pipeline.domain.bin_lookup import issuers_for_country
+from pipeline.domain.weights import CURRENCY_BY_COUNTRY, SITE_ID_BY_COUNTRY
 
-CURRENCY_BY_COUNTRY = {"MX": "MXN", "BR": "BRL", "CO": "COP"}
-SITE_ID_BY_COUNTRY = {"MX": "MLM", "BR": "MLB", "CO": "MCO"}
 DLOCAL_METHOD_TYPE = {
     "card": "CARD",
     "oxxo": "TICKET",

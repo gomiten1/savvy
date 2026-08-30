@@ -11,7 +11,7 @@ from pipeline.silver.recovery import (
     recovery_confidence,
     expected_recovery_rate,
 )
-from pipeline.generator.weights import RECOVERY_RATE_BY_CANONICAL_CODE, MIN_SAMPLE_SIZE_PER_CELL
+from pipeline.domain.weights import RECOVERY_RATE_BY_CANONICAL_CODE, MIN_SAMPLE_SIZE_PER_CELL
 
 
 class RecoveryDeviationTest(unittest.TestCase):

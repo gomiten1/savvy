@@ -29,7 +29,7 @@ from pathlib import Path
 
 import duckdb
 
-from pipeline.generator.weights import (
+from pipeline.domain.weights import (
     BASE_TXNS_PER_MINUTE,
     DEMO_SPEED_MULTIPLIER,
     MERCHANT_WEIGHTS,
@@ -40,6 +40,7 @@ from pipeline.generator.weights import (
     MAX_ATTEMPTS_PER_TRANSACTION,
     AMOUNT_RANGE_BY_COUNTRY,
 )
+from pipeline.domain.seasonality import volume_multiplier
 from pipeline.generator.sampling import enumerate_rate_cells, weighted_choice, poisson_sample
 from pipeline.generator.vendor_shapes import CanonicalEvent, build_vendor_event, pick_issuer_id
 from pipeline.generator.inject_incidents import (
@@ -240,7 +241,15 @@ class LiveStreamGenerator:
         total_expected = (self.base_txns_per_minute / 60.0) * tick_sim_seconds
         records = []
         for cell in self.rate_cells:
-            expected = total_expected * cell.weight
+            # Estacionalidad (weekday x hora-del-día) aplicada acá igual que
+            # en el Generador A -- ver seasonality.py. NO se pasan
+            # active_events: los picos estacionales grandes (buen_fin_mx,
+            # etc.) se disparan por offset de día dentro de la ventana fija
+            # de 14 días del histórico, un concepto que el demo en vivo (un
+            # sim_now corriendo, sin ventana) no tiene -- solo el patrón
+            # semanal/horario aplica acá.
+            vol_mult = volume_multiplier(sim_now, cell.country, active_events=None)
+            expected = total_expected * cell.weight * vol_mult
             n = poisson_sample(self.rng, expected)
             if n <= 0:
                 continue

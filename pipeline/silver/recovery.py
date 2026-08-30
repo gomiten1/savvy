@@ -13,7 +13,7 @@ Dos consumidores:
 """
 from collections import Counter
 
-from pipeline.generator.weights import (
+from pipeline.domain.weights import (
     RECOVERY_RATE_BY_CANONICAL_CODE,
     MAX_ATTEMPTS_PER_TRANSACTION,
     MIN_SAMPLE_SIZE_PER_CELL,

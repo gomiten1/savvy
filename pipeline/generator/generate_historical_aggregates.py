@@ -30,7 +30,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from pipeline.generator.weights import (
+from pipeline.domain.weights import (
     BASE_TXNS_PER_MINUTE,
     HISTORICAL_DAYS,
     CANONICAL_DECLINE_WEIGHTS,
@@ -40,15 +40,15 @@ from pipeline.generator.weights import (
     ERROR_STATUS_CANONICAL_CODES,
     FX_RATE_TO_USD,
     AMOUNT_RANGE_BY_COUNTRY,
+    RECOVERY_RATE_BY_CANONICAL_CODE,
+    CURRENCY_BY_COUNTRY,
 )
-from pipeline.generator.seasonality import (
+from pipeline.domain.seasonality import (
     volume_multiplier,
     minute_of_day,
     to_utc_iso,
 )
 from pipeline.generator.sampling import enumerate_rate_cells, cell_id, poisson_sample, apportion
-from pipeline.generator.vendor_shapes import CURRENCY_BY_COUNTRY
-from pipeline.silver.recovery import expected_recovery_rate
 from pipeline.gold.schema import GOLD_DIRNAME, HISTORICAL_DB_FILENAME, RATE_PARQUET_FILENAME, DECLINE_PARQUET_FILENAME
 from pipeline.gold.materialize import open_scratch_build_conn, finalize_historical, insert_rate_rows, insert_decline_rows
 
@@ -176,12 +176,15 @@ def build_database(history_start: datetime, history_end: datetime, seed: int, ba
                 m_approved = m_attempts - m_declined - m_error
 
                 rate_buffer.append(
-                    (
-                        time_bucket_iso, m_of_day, weekday, merchant, cell.provider,
-                        cell.country, cell.payment_method, cell.issuing_bank, cid,
-                        m_attempts, m_approved, m_declined, m_error,
-                        round(m_attempts * amount_usd_avg, 2),
-                    )
+                    {
+                        "time_bucket": time_bucket_iso, "minute_of_day": m_of_day,
+                        "weekday": weekday, "merchant_id": merchant,
+                        "provider_id": cell.provider, "country": cell.country,
+                        "method": cell.payment_method, "issuing_bank": cell.issuing_bank,
+                        "cell_id": cid, "attempts": m_attempts, "approved": m_approved,
+                        "declined": m_declined, "error": m_error,
+                        "amount_usd_total": round(m_attempts * amount_usd_avg, 2),
+                    }
                 )
             cell_total_attempts[cell.key] += attempts
 
@@ -206,13 +209,18 @@ def build_database(history_start: datetime, history_end: datetime, seed: int, ba
     # segunda pasada: resolver recovered a partir de declines acumulados por hora
     decline_rows = []
     for (hour_iso, merchant, provider, country, method, bank, code), declines in decline_acc.items():
-        expected = expected_recovery_rate(code) or 0.0
+        expected = RECOVERY_RATE_BY_CANONICAL_CODE.get(code, 0.0)
         observed_rate = min(1.0, max(0.0, rng.gauss(expected, 0.05)))
         recovered = min(declines, max(0, round(declines * observed_rate)))
         cid = cell_id(provider, country, method, code)
         amount_usd_total = round(declines * avg_amount_usd_by_country[country], 2)
         decline_rows.append(
-            (hour_iso, merchant, provider, country, method, bank, code, cid, declines, recovered, amount_usd_total)
+            {
+                "hour_bucket": hour_iso, "merchant_id": merchant, "provider_id": provider,
+                "country": country, "method": method, "issuing_bank": bank,
+                "decline_code": code, "cell_id": cid, "declines": declines,
+                "recovered": recovered, "amount_usd_total": amount_usd_total,
+            }
         )
     insert_decline_rows(conn, decline_rows)
     conn.commit()

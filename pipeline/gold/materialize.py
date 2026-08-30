@@ -77,17 +77,23 @@ def open_scratch_build_conn(gold_dir: Path):
 
 
 def insert_rate_rows(conn, rows: list):
+    """rows: dicts keyed by RATE_COLUMNS names -- el orden posicional para
+    el INSERT lo decide esta función a partir de RATE_COLUMNS, no el
+    caller, así que un solo lugar declara el orden de columnas."""
     if not rows:
         return
     placeholders = ",".join("?" * len(RATE_COLUMNS))
-    conn.executemany(f"INSERT INTO rate_cells_minutely VALUES ({placeholders})", rows)
+    tuples = [tuple(row[c] for c in RATE_COLUMNS) for row in rows]
+    conn.executemany(f"INSERT INTO rate_cells_minutely VALUES ({placeholders})", tuples)
 
 
 def insert_decline_rows(conn, rows: list):
+    """rows: dicts keyed by DECLINE_COLUMNS names -- ver insert_rate_rows."""
     if not rows:
         return
     placeholders = ",".join("?" * len(DECLINE_COLUMNS))
-    conn.executemany(f"INSERT INTO decline_cells_hourly VALUES ({placeholders})", rows)
+    tuples = [tuple(row[c] for c in DECLINE_COLUMNS) for row in rows]
+    conn.executemany(f"INSERT INTO decline_cells_hourly VALUES ({placeholders})", tuples)
 
 
 def finalize_historical(scratch_conn, scratch_path: Path, gold_dir: Path):
@@ -141,24 +147,23 @@ class GoldWriter:
             amount = row.get("amount")
             amount_minor = int(round(amount * 100)) if amount is not None else None
             attempt_id = f"{row['provider']}:{row.get('_native_id')}"
-            records.append(
-                (
-                    attempt_id,
-                    row.get("linked_order_id"),
-                    row.get("attempt_number", 1),
-                    row.get("event_ts") or row["time_bucket"],
-                    row.get("merchant_id"),
-                    row["provider"],
-                    row.get("payment_method"),
-                    row.get("country"),
-                    row.get("issuing_bank"),
-                    row["status"],
-                    row.get("canonical_decline_code"),
-                    amount_minor,
-                    row.get("currency"),
-                    row.get("amount_usd"),
-                )
-            )
+            named = {
+                "attempt_id": attempt_id,
+                "payment_id": row.get("linked_order_id"),
+                "attempt_number": row.get("attempt_number", 1),
+                "event_ts": row.get("event_ts") or row["time_bucket"],
+                "merchant_id": row.get("merchant_id"),
+                "provider_id": row["provider"],
+                "method": row.get("payment_method"),
+                "country": row.get("country"),
+                "issuing_bank": row.get("issuing_bank"),
+                "status": row["status"],
+                "decline_code": row.get("canonical_decline_code"),
+                "amount_minor": amount_minor,
+                "currency": row.get("currency"),
+                "amount_usd": row.get("amount_usd"),
+            }
+            records.append(tuple(named[c] for c in LIVE_COLUMNS))
         if not records:
             return
         placeholders = ",".join("?" * len(LIVE_COLUMNS))
